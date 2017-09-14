@@ -26,14 +26,19 @@ $(printf '%s\n' "${sources[@]}" | cat -n)
 
     for choice in "${choices[@]}"; do
         case "$choice" in
-            [1-9])
+            ([1-9])
                 if [ "$choice" -le "${#sources[@]}" ]; then
                     included_source="${sources[choice-1]}"
                     included_sources=("${included_sources[@]}" "$included_source")
                 else
-                    Error "Choice $choice is larger than the number of sources"
+                    UserOutput "Choice $choice is larger than the number of sources"
                     continue 2
                 fi
+                ;;
+            (*)
+                UserOutput "Choice $choice is not a number"
+                continue 2
+                ;;
         esac
     done
 
