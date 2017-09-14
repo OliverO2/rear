@@ -20,7 +20,7 @@ $(printf '%s\n' "${sources[@]}" | cat -n)
 "
 
     included_sources=()
-    choice_input="$(UserInput -t 0 -p "Enter comma-separated values, or leave empty for all")"
+    choice_input="$(UserInput -I RESTORE_INTERNAL_SELECT_SOURCES -t 0 -p "Enter comma-separated values, or leave empty for all")"
 
     IFS=',' read -r -a choices <<< "$choice_input"
 
