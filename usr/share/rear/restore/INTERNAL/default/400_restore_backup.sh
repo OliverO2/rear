@@ -1,3 +1,5 @@
+# Restore a backup via INTERNAL/system-backup
+
 target_hostname="$(uname -n)"
 target_configuration="/etc/opt/system-backup/$target_hostname"
 sources=( $(awk '/"path": / { sub(/^.*"path": "/, ""); sub(/",.*$/, ""); print; }' "$target_configuration") )
