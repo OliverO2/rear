@@ -1,10 +1,14 @@
-host_name="$(uname -n)"
-log_file="/var/log/system-backup/backup.log"
+# Create a backup via INTERNAL/system-backup
 
-LogUserOutput "Creating system-backup archive for $host_name"
+[[ -n "$INTERNAL_BACKUP_TARGET_CONFIGURATION" ]] || Error "Configuration variable INTERNAL_BACKUP_TARGET_CONFIGURATION not set"
+[[ -n "$INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION" ]] || Error "Configuration variable INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION not set"
+[[ -n "$INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION" ]] || Error "Configuration variable INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION not set"
+[[ -n "$INTERNAL_BACKUP_LOG_FILE" ]] || Error "Configuration variable INTERNAL_BACKUP_LOG_FILE not set"
 
-LC_ALL=C.UTF-8 system-backup --remote_user "root" --log_file "$log_file" backup create --progress_file "/var/log/system-backup.status" --cleanup "/etc/opt/system-backup/$host_name"
+LogUserOutput "Creating system backup"
 
-StopIfError "Failed to create backup - see $log_file for details."
+LC_ALL=C.UTF-8 system-backup "${INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION[@]}" --log_file "$INTERNAL_BACKUP_LOG_FILE" backup create --progress_file "/var/log/system-backup.status" --cleanup --configuration "$INTERNAL_BACKUP_TARGET_CONFIGURATION" --repository "$INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION"
 
-LogUserOutput "Successfully created system-backup archive for $host_name"
+StopIfError "Failed to create backup - see $INTERNAL_BACKUP_LOG_FILE for details."
+
+LogUserOutput "Successfully created system backup"
