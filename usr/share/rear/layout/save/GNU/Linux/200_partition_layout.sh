@@ -249,10 +249,14 @@ Log "Saving disk partitions."
         blockd=${disk#/sys/block/}
         if [[ $blockd = hd* || $blockd = sd* || $blockd = cciss* || $blockd = vd* || $blockd = xvd* || $blockd = dasd* || $blockd = nvme* ]] ; then
 
+            #FIXME: exclude *rpmb (Replay Protected Memory Block) for nvme*, mmcblk* and uas
+            # *rpmb = no read access && no write access
+            # GNU Parted <= 3.2 -> Input/output error
+
             #Check if blockd is a path of a multipath device.
             if is_multipath_path ${blockd} ; then
                 Log "Ignoring $blockd: it is a path of a multipath device"
-            else    
+            elif [[ ! ($blockd = *rpmb || $blockd = *[0-9]boot[0-9]) ]]; then # Silently skip Replay Protected Memory Blocks and others  
                 devname=$(get_device_name $disk)
                 devsize=$(get_disk_size ${disk#/sys/block/})
                 disktype=$(parted -s $devname print | grep -E "Partition Table|Disk label" | cut -d ":" -f "2" | tr -d " ")
