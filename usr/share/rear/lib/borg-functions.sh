@@ -45,15 +45,21 @@ function borg_set_vars {
         BORGBACKUP_OPT_REMOTE_PATH="--remote-path $BORGBACKUP_REMOTE_PATH"
     fi
 
+    # Prepare option for Borg umask.
+    # Empty BORGBACKUP_UMASK will default to 0077.
+    BORGBACKUP_OPT_UMASK=""
+    if [ ! -z $BORGBACKUP_UMASK ]; then
+        BORGBACKUP_OPT_UMASK="--umask $BORGBACKUP_UMASK"
+    fi
+
     # Set archive cache file
     BORGBACKUP_ARCHIVE_CACHE=$TMP_DIR/borg_archive
 }
 
 # Query Borg server for repository information
 # and store it to BORGBACKUP_ARCHIVE_CACHE.
-# This should avoid repeatingly quering Borg server, which could be slow.
+# This avoids repeatedly querying Borg repository, which could be slow.
 function borg_archive_cache_create {
-    borg list $BORGBACKUP_OPT_REMOTE_PATH \
-$BORGBACKUP_USERNAME@$BORGBACKUP_HOST:$BORGBACKUP_REPO \
+    borg list $BORGBACKUP_OPT_REMOTE_PATH ${borg_dst_dev}${BORGBACKUP_REPO} \
 2> /dev/null > $BORGBACKUP_ARCHIVE_CACHE
 }

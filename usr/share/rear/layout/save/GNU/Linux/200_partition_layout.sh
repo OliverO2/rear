@@ -9,16 +9,14 @@ FEATURE_PARTED_MACHINEREADABLE=
 ### Parted used to have slightly different naming
 FEATURE_PARTED_OLDNAMING=
 
-parted_version=$(get_version parted -v)
-[[ "$parted_version" ]]
-BugIfError "Function get_version could not detect parted version."
+parted_version=$( get_version parted -v )
+test "$parted_version" || BugError "Function get_version could not detect parted version."
 
-if version_newer "$parted_version" 1.8.2 ; then
-    FEATURE_PARTED_MACHINEREADABLE=y
-fi
-if ! version_newer "$parted_version" 1.6.23 ; then
-    FEATURE_PARTED_OLDNAMING=y
-fi
+# Function version_newer v1 v2 returns 0 when v1 is greater or equal than v2:
+# Use FEATURE_PARTED_MACHINEREADABLE if parted version is 1.8.2 or newer:
+version_newer "$parted_version" 1.8.2 && FEATURE_PARTED_MACHINEREADABLE=y
+# Use FEATURE_PARTED_OLDNAMING if parted version is older than 1.6.23:
+version_newer "$parted_version" 1.6.23 || FEATURE_PARTED_OLDNAMING=y
 
 # Extract partitioning information of device $1 (full device path)
 # format : part <partition size(bytes)> <partition start(bytes)> <partition type|name> <flags> /dev/<partition>
@@ -32,14 +30,31 @@ extract_partitions() {
 
     declare path sysfs_path
     if [[ ${#sysfs_paths[@]} -eq 0 ]] ; then
-        ### try to find partitions like /dev/mapper/datalun1p1
-        if [[ ${device/mapper//} != ${device} ]] ; then
-            for path in ${device}p[0-9]* ${device}[0-9] ${device}-part* ${device}_part*; do
-                sysfs_path=$(get_sysfs_name $path)
-                if [[ "$sysfs_path" ]] && [[ -e "/sys/block/$sysfs_path" ]] ; then
-                    sysfs_paths=( "${sysfs_paths[@]}" "/sys/block/$sysfs_path" )
-                fi
-            done
+        if [[ $device = *'/mapper/'* ]]; then
+            ### As /sys/block/dm-X/holders directory contains partition name or LVM logical volume name in dm-X format,
+            ### we have to filter and keep only partition type device.
+            if [ -d /sys/block/$sysfs_name/holders ]; then
+                # for each dm devices in holders directory, only add partitions to sysfs_path array.
+                # One way is to check if the dm uuid starts with "part"
+                # example: cat /sys/block/dm-2/holders/dm-7/dm/uuid => part3-mpath-3600507680c82004cf8000000000000d8
+                for potential_partition in /sys/block/$sysfs_name/holders/*; do
+                    uuid=$( cat $potential_partition/dm/uuid )
+                    if [[ $uuid = part* ]]; then
+                        # store all the $device partition in sysfs_paths array
+                        sysfs_paths=( "${sysfs_paths[@]}" "$potential_partition" )
+                    fi
+                done
+            else
+                ### if the holders directory does not exisits 
+                ### failback to partition name guessing method.
+                ### try to find partitions like /dev/mapper/datalun1p1
+                for path in ${device}p[0-9]* ${device}[0-9]* ${device}-part* ${device}_part*; do
+                    sysfs_path=$(get_sysfs_name $path)
+                    if [[ "$sysfs_path" ]] && [[ -e "/sys/block/$sysfs_path" ]] ; then
+                        sysfs_paths=( "${sysfs_paths[@]}" "/sys/block/$sysfs_path" )
+                    fi
+                done
+            fi
         fi
     fi
 
@@ -106,17 +121,24 @@ extract_partitions() {
         done < $TMP_DIR/partitions-data
     fi
 
-    ### find partition name for gpt disks.
+    ### Find partition name for GPT disks.
     # For the SUSE specific gpt_sync_mbr partitioning scheme
     # see https://github.com/rear/rear/issues/544
     if [[ "$disk_label" = "gpt" || "$disk_label" == "gpt_sync_mbr" ]] ; then
         if [[ "$FEATURE_PARTED_MACHINEREADABLE" ]] ; then
             while read partition_nr size start junk ; do
+                # In case of GPT the 'type' field contains actually the GPT partition name.
                 type=$(grep "^$partition_nr:" $TMP_DIR/parted | cut -d ":" -f "6")
-                if [[ -z "$type" ]] ; then
-                    type="rear-noname"
-                fi
-                type=$(echo "$type" | sed -e 's/ /0x20/g') # replace spaces with 0x20 in name field
+                # There must not be any empty field in disklayout.conf
+                # because the fields in disklayout.conf are positional parameters
+                # that get assigned to variables via the 'read' shell builtin:
+                test "$type" || type="rear-noname"
+                # There must not be any IFS character in a field in disklayout.conf
+                # because IFS characters are used as field separators
+                # but in particular a GPT partition name can contain spaces
+                # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+                # so that the partition name is stored as a percent-encoded string:
+                type=$( percent_encode "$type" )
                 sed -i /^$partition_nr\ /s/$/\ $type/ $TMP_DIR/partitions
             done < $TMP_DIR/partitions-data
         else
@@ -136,13 +158,22 @@ extract_partitions() {
                 fi
 
                 number=$(get_columns "$line" "$numberfield" | tr -d " " | tr -d ";")
+
+                # In case of GPT the 'type' field contains actually the GPT partition name.
                 type=$(get_columns "$line" "name" | tr -d " " | tr -d ";")
 
-                if [[ -z "$type" ]] ; then
-                    type="rear-noname"
-                fi
+                # There must not be any empty field in disklayout.conf
+                # because the fields in disklayout.conf are positional parameters
+                # that get assigned to variables via the 'read' shell builtin:
+                test "$type" || type="rear-noname"
 
-                type=$(echo "$type" | sed -e 's/ /0x20/g')
+                # There must not be any IFS character in a field in disklayout.conf
+                # because IFS characters are used as field separators
+                # but in particular a GPT partition name can contain spaces
+                # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+                # so that the partition name is stored as a percent-encoded string:
+                type=$( percent_encode "$type" )
+
                 sed -i /^$number\ /s/$/\ $type/ $TMP_DIR/partitions
             done < <(grep -E '^[ ]*[0-9]' $TMP_DIR/parted)
         fi
@@ -225,6 +256,23 @@ extract_partitions() {
                     sed -i /^$partition_nr\ /s/\ primary\ /\ extended\ / $TMP_DIR/partitions
                 fi
             fi
+
+            # Replace currently possibly wrong extended partition size value
+            # by the value that parted reports if those values differ, cf.
+            # https://github.com/rear/rear/pull/1733#issuecomment-368051895
+            # In SLE10 there is GNU Parted 1.6.25.1 which supports 'unit B'
+            # that is documented in 'info parted' (but not yet in 'man parted').
+            # Example of a parted_extended_partition_line:
+            #   # parted -s /dev/sdb unit B print | grep -w '3' | grep -w 'extended'
+            #    3      1266679808B  1790967807B  524288000B  extended                  lba, type=0f
+            # where the size is 524288000B i.e. parted_extended_partition_line[3]
+            parted_extended_partition_line=( $( parted -s $device unit B print | grep -w "$partition_nr" | grep -w 'extended' ) )
+            parted_extended_partition_size="${parted_extended_partition_line[3]%%B*}"
+            if test $size -ne $parted_extended_partition_size ; then
+                 Log "Replacing probably wrong extended partition size $size by what parted reports $parted_extended_partition_size"
+                 sed -i /^$partition_nr\ /s/\ $size\ /\ $parted_extended_partition_size\ / $TMP_DIR/partitions
+            fi
+
         done < $TMP_DIR/partitions-data
     fi
 
@@ -247,7 +295,7 @@ Log "Saving disk partitions."
     # format: disk <disk> <sectors> <partition label type>
     for disk in /sys/block/* ; do
         blockd=${disk#/sys/block/}
-        if [[ $blockd = hd* || $blockd = sd* || $blockd = cciss* || $blockd = vd* || $blockd = xvd* || $blockd = dasd* || $blockd = nvme* ]] ; then
+        if [[ $blockd = hd* || $blockd = sd* || $blockd = cciss* || $blockd = vd* || $blockd = xvd* || $blockd = dasd* || $blockd = nvme* || $blockd = mmcblk* ]] ; then
 
             #FIXME: exclude *rpmb (Replay Protected Memory Block) for nvme*, mmcblk* and uas
             # *rpmb = no read access && no write access

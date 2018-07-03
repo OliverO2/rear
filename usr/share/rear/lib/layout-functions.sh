@@ -1,23 +1,38 @@
 # Utility functions for the system layout processing.
 
-DATE=$(date +%Y%m%d)
-# FIXME: Why not using ISO 8601 date? $(date +%F)
+# TODO: Why not using ISO 8601 date 'date +%F' ?
+# Be exact to one second to ensure saved original files
+# of directly subsequent 'rear WORKFLOW' are saved with different filenames
+# that could help to avoid confusion when debugging issues later:
+DATE=$( date +%Y%m%d%H%M%S )
 
-BACKUPS_TAKEN=()
+# Each file will be only saved once by save_original_file()
+# and all subsequent save_original_file() for the same file do nothing
+# because each saved file is remembered in the SAVED_ORIGINAL_FILES array:
+SAVED_ORIGINAL_FILES=()
+SAVED_ORIGINAL_FILE_SUFFIX="orig"
 
-# Copy file $1 to $1.$DATE.
-backup_file() {
-    if [[ ! -r "$1" ]]; then
-        return
-    elif ! IsInArray "$1" "${BACKUPS_TAKEN[@]}" ; then
-        cp -ar $1 $1.$DATE.$$.bak
-        BACKUPS_TAKEN=( "${BACKUPS_TAKEN[@]}" "$1" )
-    fi
+# Save the original content of the file $1 to $1.$DATE.$2.orig
+# or to $1.$DATE.$WORKFLOW.$MASTER_PID.orig when no $2 is specified:
+save_original_file() {
+    local filename="$1"
+    test -r "$filename" || return 1
+    IsInArray "$filename" "${SAVED_ORIGINAL_FILES[@]}" && return 0
+    local extension="$2"
+    test "$extension" || extension=$WORKFLOW.$MASTER_PID
+    local saved_original_file="$filename.$DATE.$extension.$SAVED_ORIGINAL_FILE_SUFFIX"
+    cp -ar $filename $saved_original_file && SAVED_ORIGINAL_FILES=( "${SAVED_ORIGINAL_FILES[@]}" "$filename" )
 }
 
-# Restore the backup of $1
-restore_backup() {
-    cp -ar $1.$DATE.$$.bak $1
+# Restore the saved original content of the original file named $1
+# that was saved as $1.$DATE.$2.orig or $1.$DATE.$WORKFLOW.$MASTER_PID.orig
+restore_original_file() {
+    local filename="$1"
+    local extension="$2"
+    test "$extension" || extension=$WORKFLOW.$MASTER_PID
+    local saved_original_file="$filename.$DATE.$extension.$SAVED_ORIGINAL_FILE_SUFFIX"
+    test -r "$saved_original_file" || return 1
+    cp -ar $saved_original_file $filename
 }
 
 # Generate code to restore a device $1 of type $2.
@@ -45,8 +60,8 @@ EOF
 
 abort_recreate() {
     Log "Error detected during restore."
-    Log "Restoring backup of $LAYOUT_FILE"
-    restore_backup "$LAYOUT_FILE"
+    Log "Restoring saved original $LAYOUT_FILE"
+    restore_original_file "$LAYOUT_FILE"
 }
 
 # Test and log if a component $1 (type $2) needs to be recreated.
@@ -111,13 +126,18 @@ generate_layout_dependencies() {
             lvmvol)
                 vgrp=$(echo "$remainder" | cut -d " " -f "1")
                 lvol=$(echo "$remainder" | cut -d " " -f "2")
+                # When a LV is a Thin, then we need to create the Thin Pool first
+                pool=$(echo "$remainder" | egrep -ow "thinpool:\\S+" | cut -d ":" -f 2)
 
                 # Vgs and Lvs containing - in their name have a double dash in DM
                 dm_vgrp=${vgrp//-/--}
                 dm_lvol=${lvol//-/--}
+                dm_pool=${pool//-/--}
 
-                add_dependency "/dev/mapper/${dm_vgrp#/dev/}-$dm_lvol" "$vgrp"
-                add_component "/dev/mapper/${dm_vgrp#/dev/}-$dm_lvol" "lvmvol"
+                dm_prefix="/dev/mapper/${dm_vgrp#/dev/}"
+                add_dependency "$dm_prefix-$dm_lvol" "$vgrp"
+                [ -z "$pool" ] || add_dependency "$dm_prefix-$dm_lvol" "$dm_prefix-$dm_pool"
+                add_component "$dm_prefix-$dm_lvol" "lvmvol"
                 ;;
             raid)
                 name=$(echo "$remainder" | cut -d " " -f "1")
@@ -680,38 +700,78 @@ function get_part_device_name_format() {
             part_name="${device_name}p" # append p between main device and partitions
             ;;
         (*mapper[/!]*)
+            # Every Linux distribution / version has their own rule to name the multipthed partion device.
+            #
+            # Suse:
+            #     Version <12 : always <device>_part<part_num> (same with/without user_friendly_names)
+            #     Version >=12 : always <device>-part<part_num> (same with/without user_friendly_names)
+            #     Question still open for sles10 ...
+            # RedHat:
+            #     Version <7 : always <device>p<part_num> (same with/without user_friendly_names)
+            #     Version >=7 : if user_friendly_names (default) <device><part_num> else <device>p<part_num>
+            # Debian:
+            #     if user_firendly_names (default) <device>-part<part_num>
+            #     if NOT user_firendly_names <device>p<part_num>
+            #
+
+            # First we need to know if user_friendly_names is activated (for Fedora/RedHat and Debian/ubuntu)
+            if multipathd ; then
+                # check if multipath if using the "user_friendly_names" by default in the current configuration.
+                user_friendly_names=$(echo "show config" | multipathd -k | awk '/user_friendly_names/ { gsub("\"","") ; print $2 }' | head -n 1 )
+            fi
+
             case $OS_MASTER_VENDOR in
 
                 (SUSE)
-                # SUSE Linux SLE12 put a "-part" between [mpath device name] and [part number].
-                # For example /dev/mapper/3600507680c82004cf8000000000000d8-part1.
-                # But SLES11 uses a "_part" instead. (Let's assume it is the same for SLES10 )
-                if (( $OS_MASTER_VERSION < 12 )) ; then
-                    # For SUSE before version 12
-                    part_name="${device_name}_part" # append _part between main device and partitions
-                else
-                    # For SUSE 12 or above
-                    part_name="${device_name}-part" # append -part between main device and partitions
-                fi
+                    # No need to check if user_friendly_names is activated or not as Suse always apply the same naming convention.
+
+                    # SUSE Linux SLE12 put a "-part" between [mpath device name] and [part number].
+                    # For example /dev/mapper/3600507680c82004cf8000000000000d8-part1.
+                    # But SLES11 uses a "_part" instead. (Let's assume it is the same for SLES10 )
+                    if (( $OS_MASTER_VERSION < 12 )) ; then
+                        # For SUSE before version 12
+                        part_name="${device_name}_part" # append _part between main device and partitions
+                    else
+                        # For SUSE 12 or above
+                        part_name="${device_name}-part" # append -part between main device and partitions
+                    fi
                 ;;
 
                 (Fedora)
-                    # RHEL 7 and above seems to named partitions on multipathed devices with
-                    # [mpath device name] + [part number] like standard disk.
-                    # For example: /dev/mapper/mpatha1
-
-                    # But the scheme in RHEL 6 need a "p" between [mpath device name] and [part number].
-                    # For exemple: /dev/mapper/mpathap1
-                    if (( $OS_MASTER_VERSION < 7 )) ; then
+                    if is_false "$user_friendly_names" ; then
+                        # RHEL 7 and above seems to named partitions on multipathed devices with
+                        # [mpath device UUID/WWID] + p + [part number] when "user_friendly_names"
+                        # option is FALSE.
+                        # For example: /dev/mapper/3600507680c82004cf8000000000000d8p1
                         part_name="${device_name}p" # append p between main device and partitions
+                    else
+                        # RHEL 7 and above seems to named partitions on multipathed devices with
+                        # [mpath device name] + [part number] like standard disk when "user_friendly_names"
+                        # option is used (default).
+                        # For example: /dev/mapper/mpatha1
+                        # But the scheme in RHEL 6 need a "p" between [mpath device name] and [part number].
+                        # For exemple: /dev/mapper/mpathap1
+                        if (( $OS_MASTER_VERSION < 7 )) ; then
+                            part_name="${device_name}p" # append p between main device and partitions
+                        else
+                            part_name="${device_name}"
+                        fi
                     fi
                 ;;
 
                 (Debian)
-                    # Ubuntu 16.04 (need to check for other version) named muiltipathed partitions with
-                    # [mpath device name] + "-part" + [part number]
-                    # for example : /dev/mapper/mpatha-part1
-                    part_name="${device_name}-part" # append -part between main device and partitions
+                    if is_false "$user_friendly_names" ; then
+                        # Exceptional case for Debian/ubuntu
+                        # When user_friendly_names is disable, debian based system will name partition
+                        # [mpath device UUID/WWID] + p + [part number]
+                        part_name="${device_name}p"
+                    else
+                        # Default case (user_friendly_name enable)
+                        # Ubuntu 16.04 (need to check for other version) named muiltipathed partitions with
+                        # [mpath device name] + "-part" + [part number]
+                        # for example : /dev/mapper/mpatha-part1
+                        part_name="${device_name}-part" # append -part between main device and partitions
+                    fi
                 ;;
 
                 (*)
@@ -736,17 +796,30 @@ function apply_layout_mappings() {
 
     local file_to_migrate="$1"
 
-    # apply_layout_mappings need one argument.
-    [ "$file_to_migrate" ] || BugError "apply_layout_mappings function called without argument (file_to_migrate)."
+    # apply_layout_mappings needs one argument:
+    test "$file_to_migrate" || BugError "apply_layout_mappings function called without argument (file_to_migrate)."
 
     # Only apply layout mapping on non-empty file:
     test -s "$file_to_migrate" || return 0
     # --End Of TEST section--
 
-    # Generate unique words as replacement placeholders to correctly handle circular replacements (e.g. sda -> sdb and sdb -> sda).
-    # Replacement strategy is
-    # 1) replace all source devices with a unique word (the "replacement" )
-    # 2) replace all unique replacement words with the target device
+    # Generate unique words (where unique means that those generated words cannot exist in file_to_migrate)
+    # as replacement placeholders to correctly handle circular replacements e.g. for "sda -> sdb and sdb -> sda"
+    # in the mapping file those generated unique words would be _REAR0_ for sda and _REAR1_ for sdb.
+    # The replacement strategy is:
+    # Step 0:
+    # For each original device in the mapping file generate a unique word (the "replacement").
+    # Step 1:
+    # In file_to_migrate temporarily replace all original devices with their matching unique word.
+    # E.g. "disk sda and disk sdb" would become "disk _REAR0_ and disk _REAR1_" temporarily in file_to_migrate.
+    # Step 2:
+    # In file_to_migrate replace all unique replacement words with the matching target device of the source device.
+    # E.g. for "sda -> sdb and sdb -> sda" in the mapping file and the unique words _REAR0_ for sda and _REAR1_ for sdb
+    # "disk _REAR0_ and disk _REAR1_" would become "disk sdb and disk sda" in the final file_to_migrate
+    # so that the circular replacement "sda -> sdb and sdb -> sda" is done in file_to_migrate.
+    # Step 3:
+    # In file_to_migrate verify that there are none of those temporary replacement words from step 1 left
+    # to ensure the replacement was done correctly and complete.
 
     # Replacement_file initialization.
     replacement_file="$TMP_DIR/replacement_file"
@@ -759,50 +832,98 @@ function apply_layout_mappings() {
     }
 
     function has_replacement() {
-        if grep -q "^$1 " "$replacement_file" ; then
-            return 0
-        else
-            return 1
-        fi
+        grep -q "^$1 " "$replacement_file"
     }
 
-    # Step-1 replace all source devices with a unique word (the "replacement")
-    let replaced_count=0
+    function get_replacement() {
+        local item replacement junk
+        read item replacement junk < <( grep "^$1 " $replacement_file )
+        test "$replacement" && echo "$replacement" || return 1
+    }
+
+    # Step 0:
+    # For each original device in the mapping file generate a unique word (the "replacement").
+    # E.g. when the mapping file content is
+    #   /dev/sda /dev/sdb
+    #   /dev/sdb /dev/sda
+    #   /dev/sdd /dev/sdc
+    # the replacement file will contain
+    #   /dev/sda _REAR0_
+    #   /dev/sdb _REAR1_
+    #   /dev/sdd _REAR2_
+    #   /dev/sdc _REAR3_
+    replaced_count=0
     while read source target junk ; do
-        if ! has_replacement "$source" ; then
-            add_replacement "$source"
-        fi
+        # Skip lines that have wrong syntax:
+        test "$source" -a "$target" || continue
+        has_replacement "$source" || add_replacement "$source"
+        has_replacement "$target" || add_replacement "$target"
+    done < <( grep -v '^#' "$MAPPING_FILE" )
 
-        if ! has_replacement "$target" ; then
-            add_replacement "$target"
-        fi
-    done < "$MAPPING_FILE"
-
-    # Replace all originals with their replacements.
+    # Step 1:
+    # Replace all original devices with their replacements.
+    # E.g. when the file_to_migrate content is
+    #   disk /dev/sda
+    #   disk /dev/sdb
+    #   disk /dev/sdc
+    #   disk /dev/sdd
+    # it will get temporarily replaced (with the replacement file content in step 0 above) by
+    #   disk _REAR0_
+    #   disk _REAR1_
+    #   disk _REAR3_
+    #   disk _REAR2_
     while read original replacement junk ; do
-        # Replace partitions (we normalize cciss/c0d0p1 to _REAR5_1)
-        part_base=$(get_part_device_name_format "$original")
-        sed -i -r "\|$original|s|${part_base}([0-9]+)|$replacement\1|g" "$file_to_migrate"
-
+        # Skip lines that have wrong syntax:
+        test "$original" -a "$replacement" || continue
+        # Replace partitions with unique replacement PATTERN (we normalize cciss/c0d0p1 to _REAR5_1)
+        # Due to multipath partion naming complexity, all known partition naming type (mpatha1,mpathap1,mpatha-part1,mpatha_part1) will be replaced by _REAR"X"_1
+        sed -i -r "\|$original|s|$original(p)*([-_]part)*([0-9]+)|$replacement\3|g" "$file_to_migrate"
         # Replace whole devices
-        ### note that / is a word boundary, so is matched by \<, hence the extra /
+        # Note that / is a word boundary, so is matched by \<, hence the extra /
         sed -i -r "\|$original|s|/\<${original#/}\>|${replacement}|g" "$file_to_migrate"
     done < "$replacement_file"
 
-    # Step-2 replace all unique replacement words with the target device
-    function get_replacement() {
-        local item replacement junk
-        read item replacement junk < <(grep "^$1 " $replacement_file)
-        echo "$replacement"
-    }
-
+    # Step 2:
+    # Replace all unique replacement words with the matching target device of the source device in the mapping file.
+    # E.g. when the file_to_migrate content was in step 1 above temporarily changed to
+    #   disk _REAR0_
+    #   disk _REAR1_
+    #   disk _REAR3_
+    #   disk _REAR2_
+    # it will now get finally replaced (with the replacement file and mapping file contents in step 0 above) by
+    #   disk /dev/sdb
+    #   disk /dev/sda
+    #   disk _REAR3_
+    #   disk /dev/sdc
+    # where the temporary replacement "disk _REAR3_" from step 1 above is left because
+    # there is (erroneously) no mapping for /dev/sdc (as source device) in the mapping file (in step 0 above).
     while read source target junk ; do
-        replacement=$(get_replacement "$source")
-        # Replace whole device
+        # Skip lines that have wrong syntax:
+        test "$source" -a "$target" || continue
+        # Skip when there is no replacement:
+        replacement=$( get_replacement "$source" ) || continue
+        # Replace whole device:
         sed -i -r "\|$replacement|s|$replacement\>|$target|g" "$file_to_migrate"
-
-        # Replace partitions
-        target=$(get_part_device_name_format "$target")
+        # Replace partitions:
+        target=$( get_part_device_name_format "$target" )
         sed -i -r "\|$replacement|s|$replacement([0-9]+)|$target\1|g" "$file_to_migrate"
-    done < "$MAPPING_FILE"
+    done < <( grep -v '^#' "$MAPPING_FILE" )
+
+    # Step 3:
+    # Verify that there are none of those temporary replacement words from step 1 left in file_to_migrate
+    # to ensure the replacement was done correctly and complete (cf. the above example where '_REAR3_' is left).
+    apply_layout_mappings_succeeded="yes"
+    while read original replacement junk ; do
+        # Skip lines that have wrong syntax:
+        test "$original" -a "$replacement" || continue
+        if grep -q "$replacement" "$file_to_migrate" ; then
+            apply_layout_mappings_succeeded="no"
+            LogPrintError "Failed to apply layout mappings to $file_to_migrate for $original (probably no mapping for $original in $MAPPING_FILE)"
+        fi
+    done < "$replacement_file"
+    # It is the responsibility of the caller of this apply_layout_mappings function what to do when it failed
+    # (e.g. error out, retry, show a user dialog, or whatever is appropriate in the caller's environment):
+    is_true $apply_layout_mappings_succeeded && return 0 || return 1
 }
+
+# vim: set et ts=4 sw=4:

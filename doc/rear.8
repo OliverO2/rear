@@ -2,12 +2,12 @@
 .\"     Title: rear
 .\"    Author: [see the "AUTHORS" section]
 .\" Generator: DocBook XSL Stylesheets v1.78.1 <http://docbook.sf.net/>
-.\"      Date: 14 December 2017
+.\"      Date: 20 June 2018
 .\"    Manual: \ \&
 .\"    Source: \ \&
 .\"  Language: English
 .\"
-.TH "REAR" "8" "14 December 2017" "\ \&" "\ \&"
+.TH "REAR" "8" "20 June 2018" "\ \&" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -38,7 +38,7 @@ Relax\-and\-Recover is the leading Open Source disaster recovery solution\&. It 
 .sp
 Relax\-and\-Recover produces a bootable image\&. This image can repartition the system\&. Once that is done it initiates a restore from backup\&. Restores to different hardware are possible\&. Relax\-and\-Recover can therefore be used as a migration tool as well\&.
 .sp
-Currently Relax\-and\-Recover supports various boot media (incl\&. ISO, PXE, OBDR tape, USB or eSATA storage), a variety of network protocols (incl\&. sftp, ftp, http, nfs, cifs) for storage and backup as well as a multitude of backup strategies (incl\&. IBM Tivoli Storage Manager, HP DataProtector, Symantec NetBackup, EMC NetWorker, FDR/Upstream, NovaBACKUP DC, Bareos, Bacula, rsync, rbme, Borg)\&. This results in a bootable image that is capable of booting via PXE, DVD/CD, bootable tape or virtual provisioning\&.
+Currently Relax\-and\-Recover supports various boot media (incl\&. ISO, PXE, OBDR tape, USB or eSATA storage), a variety of network protocols (incl\&. sftp, ftp, http, nfs, cifs) for storage and backup as well as a multitude of backup strategies (incl\&. IBM Tivoli Storage Manager, HP DataProtector, Symantec NetBackup, EMC NetWorker, EMC Avamar, FDR/Upstream, NovaBACKUP DC, Bareos, Bacula, rsync, rbme, Borg)\&. This results in a bootable image that is capable of booting via PXE, DVD/CD, bootable tape or virtual provisioning\&.
 .sp
 Relax\-and\-Recover was designed to be easy to set up, requires no maintenance and is there to assist when disaster strikes\&. Its setup\-and\-forget nature removes any excuses for not having a disaster recovery solution implemented\&.
 .sp
@@ -166,6 +166,16 @@ recover the system; can be used only when running from the rescue media
 only restore the backup; can be used only when running from the rescue media
 .RE
 .PP
+\fBmkopalpba\fR
+.RS 4
+create a pre\-boot authentication (PBA) image to boot from TCG Opal 2\-compliant self\-encrypting disks
+.RE
+.PP
+\fBopaladmin\fR
+.RS 4
+administrate TCG Opal 2\-compliant self\-encrypting disks
+.RE
+.PP
 \fBvalidate\fR
 .RS 4
 submit validation information
@@ -205,7 +215,7 @@ In this combination Relax\-and\-Recover recreates the system layout and calls th
 For demonstration and special use purposes Relax\-and\-Recover also includes an internal backup method, NETFS, which can be used to create a simple tar\&.gz archive of the system\&. For all permanent setups we recommend using something more professional for backup, either a traditional backup software (open source or commercial) or rsync with hardlink based solutions, e\&.g\&. RSYNC BACKUP MADE EASY\&.
 .SH "RESCUE IMAGE CONFIGURATION"
 .sp
-The OUTPUT variable defines from where our bootable rescue image will be booted and the OUTPUT_URL variable defines where the rescue image should be send to\&. Possible OUTPUT setting are:
+The OUTPUT variable defines from where our bootable rescue image will be booted and the OUTPUT_URL variable defines where the rescue image should be send to\&. Possible OUTPUT settings are:
 .PP
 OUTPUT=\fBRAMDISK\fR
 .RS 4
@@ -235,8 +245,48 @@ OUTPUT=\fBUSB\fR
 Create a bootable USB disk (using extlinux)\&. Specify the USB storage device by using
 USB_DEVICE\&.
 .RE
+.PP
+OUTPUT=\fBRAWDISK\fR
+.RS 4
+Create a bootable image file named "rear\-$(hostname)\&.raw\&.gz", which
 .sp
-When using OUTPUT=ISO, RAMDISK, OBDR or USB you should provide the backup target location through the OUTPUT_URL variable\&. Possible OUTPUT_URL settings are:
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+supports UEFI boot if syslinux/EFI or Grub 2/EFI is installed,
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+supports Legacy BIOS boot if syslinux is installed,
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+supports UEFI/Legacy BIOS dual boot if syslinux
+\fBand\fR
+one of the supported EFI bootloaders are installed\&.
+.RE
+.RE
+.sp
+When using OUTPUT=ISO, RAMDISK, OBDR, USB, or RAWDISK you should provide the backup target location through the OUTPUT_URL variable\&. Possible OUTPUT_URL settings are:
 .PP
 OUTPUT_URL=\fBfile://\fR
 .RS 4
@@ -317,32 +367,85 @@ Write the image using sshfs and the SSH protocol\&.
 .PP
 OUTPUT_URL=\fBnull\fR
 .RS 4
-Do not copy the ISO image from
+Do not copy the rescue image from
 \fI/var/lib/rear/output/\fR
 to a remote output location\&.
 OUTPUT_URL=null
 is useful when another program (e\&.g\&. an
 \fIexternal\fR
-backup program) is used to save the ISO image from the local system to a remote place, or with
+backup program) is used to save the rescue image from the local system to a remote place, or with
 BACKUP_URL=iso:///backup
-when the backup is included in the ISO image to avoid a (big) copy of the ISO image at a remote output location\&. In the latter case the ISO image must be manually saved from the local system to a remote place\&.
+when the backup is included in the rescue image to avoid a (big) copy of the rescue image at a remote output location\&. In the latter case the rescue image must be manually saved from the local system to a remote place\&.
 OUTPUT_URL=null
 is only supported together with
 BACKUP=NETFS\&.
 .RE
 .sp
-If you do not specify OUTPUT_URL variable then by default it will be aligned to what was defined by variable BACKUP_URL\&. And, the ISO image will then be copied to the same location as your backup of the system disk(s)\&.
+If you do not specify OUTPUT_URL variable then by default it will be aligned to what was defined by variable BACKUP_URL\&. And, the rescue image will then be copied to the same location as your backup of the system disk(s)\&.
 .sp
 The ISO_DEFAULT variable defines what default boot option is used on the rescue image\&. Possible values are manual, boothd or automatic\&. Manual will make you boot into the shell directly by default, boothd will boot to the first disk (default) or automatic will automatically start in recovery mode\&.
+.SH "RESCUE IMAGE KERNEL COMMAND LINE OPTIONS"
+.sp
+When booting the rescue image you can edit the kernel command line\&. There are some Relax\-and\-Recover specific kernel command line options:
+.PP
+\fBdebug\fR
+.RS 4
+The rescue system start up scripts in /etc/scripts/system\-setup\&.d/ are run one by one each one after pressing
+\fIEnter\fR
+and the scripts are run with
+\fIset \-x\fR
+which prints commands and their arguments as they are executed\&.
+.RE
+.PP
+\fBauto_recover\fR or \fBautomatic\fR
+.RS 4
+Launch
+\fIrear recover\fR
+automatically (without automated reboot)\&. Together with
+\fIdebug\fR
+it runs
+\fIrear recover\fR
+in debug mode\&.
+.RE
+.PP
+\fBunattended\fR
+.RS 4
+Launch
+\fIrear recover\fR
+automatically as with
+\fIauto_recover\fR
+plus automated reboot after successful
+\fIrear recover\fR\&.
+.RE
+.PP
+\fBip= nm= netdev= gw=\fR
+.RS 4
+If IP address plus optionally netmask (default 255\&.255\&.255\&.0), network device (default eth0), and a default gateway are specified only that single network device is set up\&. Example:
+.RE
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+ip=192\&.168\&.100\&.2 nm=255\&.255\&.255\&.0 netdev=eth0 gw=192\&.168\&.100\&.1
+.fi
+.if n \{\
+.RE
+.\}
+.PP
+\fBnoip\fR
+.RS 4
+Skip network devices setup by the rescue system start up scripts (overrides ip= nm= netdev= gw=)\&.
+.RE
 .SH "BACKUP SOFTWARE INTEGRATION"
 .sp
-Currently Relax\-and\-Recover supports the following backup methods\&. Please distinguish carefully between Relax\-and\-Recover support for 3rd party backup software and Relax\-and\-Recover internal backup methods\&. The latter also creates a backup of your data while the former will only integrate Relax\-and\-Recover with the backup software to restore the data with the help of the backup software without actually creating backups\&. This means that for all non\-internal backup software you \fBmust\fR take care of creating backups yourself\&.
+Currently Relax\-and\-Recover supports the following backup methods\&. Please distinguish carefully between Relax\-and\-Recover support for 3rd party backup software and Relax\-and\-Recover internal backup methods\&. The latter also creates a backup of your data while the former will only integrate Relax\-and\-Recover with the backup software to restore the data with the help of the backup software without actually creating backups\&. This means that for all non\-internal backup software you \fBmust\fR take care of creating backups yourself (unless otherwise noted)\&.
 .sp
-Especially the rear mkbackup command can be confusing as it is only useful for the internal backup methods and has no function at all with the other (external) backup methods\&.
+Especially the rear mkbackup command can be confusing as it is only useful for the internal backup methods and has usually no function at all with the other (external) backup methods\&.
 .sp
 The following backup methods need to be set in Relax\-and\-Recover with the BACKUP option\&. As mentioned we have two types of BACKUP methods \- \fIinternal\fR and \fIexternal\fR\&.
 .sp
-The following BACKUP methods are \fIexternal\fR of Relax\-and\-Recover meaning that you are responsible of backups being made:
+The following BACKUP methods are \fIexternal\fR of Relax\-and\-Recover meaning that usually you are responsible of backups being made:
 .PP
 BACKUP=\fBREQUESTRESTORE\fR
 .RS 4
@@ -387,12 +490,20 @@ Use Symantec NetBackup to restore the data\&.
 .PP
 BACKUP=\fBTSM\fR
 .RS 4
-Use IBM Tivoli Storage Manager to restore the data\&. The Relax\-and\-Recover result files (e\&.g\&. ISO image) are also saved into TSM\&.
+Use IBM Tivoli Storage Manager to restore the data\&. The Relax\-and\-Recover result files (e\&.g\&. ISO image) are also saved into TSM\&. There is a (currently experimental) first draft implementation that a TSM backup is created by calling
+\fIdsmc incremental\fR
+during
+\fIrear mkbackup\fR\&.
 .RE
 .PP
 BACKUP=\fBNSR\fR
 .RS 4
 Using EMC NetWorker (Legato) to restore the data\&.
+.RE
+.PP
+BACKUP=\fBAVA\fR
+.RS 4
+Using EMC Avamar to restore the data\&.
 .RE
 .PP
 BACKUP=\fBSESAM\fR
@@ -427,7 +538,13 @@ Use encrypted bandwidth\-efficient backup solution using the rsync algorithm to 
 .PP
 BACKUP=\fBBORG\fR
 .RS 4
-Use BorgBackup (short Borg) a deduplicating backup program to restore the data\&.
+Use BorgBackup (short Borg) a deduplicating backup program to restore the data\&. Executing
+\fIrear mkbackup\fR
+will create a Borg backup, see the section
+\fIReaR with Borg back end\fR
+in the ReaR user\-guide
+\fIScenarios\fR
+documentation\&.
 .RE
 .sp
 The following BACKUP methods are \fIinternal\fR of Relax\-and\-Recover:
@@ -553,6 +670,50 @@ OUTPUT_URL=nfs://server/path/
 .RE
 .sp
 When using BACKUP=NETFS and BACKUP_PROG=tar there is an option to select BACKUP_TYPE=incremental or BACKUP_TYPE=differential to let rear make incremental or differential backups until the next full backup day e\&.g\&. via FULLBACKUPDAY="Mon" is reached or when the last full backup is too old after FULLBACKUP_OUTDATED_DAYS has passed\&. Incremental or differential backup is currently only known to work with BACKUP_URL=nfs\&. Other BACKUP_URL schemes may work but at least BACKUP_URL=usb requires USB_SUFFIX to be set to work with incremental or differential backup\&.
+.SH "SUPPORT FOR SELF-ENCRYPTING DISKS"
+.sp
+Relax\-and\-Recover supports self\-encrypting disks (SEDs) compliant with the TCG Opal 2 specification if the sedutil\-cli executable is installed\&.
+.sp
+Self\-encrypting disk support includes
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+recovery (saving and restoring the system\(cqs SED configuration),
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+setting up SEDs, including assigning a disk password,
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+providing a pre\-boot authentication (PBA) system to unlock SEDs at boot time\&.
+.RE
+.sp
+To prepare booting from an SED, run rear mkopalpba, then create the rescue system\&.
+.sp
+To set up an SED, boot the Relax\-and\-Recover rescue system and run `rear opaladmin setupERASE DEVICE` (\fIDEVICE\fR being the disk device path like /dev/sda)\&.
+.sp
+For complete information, consult the section "Support for TCG Opal 2\-compliant Self\-Encrypting Disks" in the Relax\-and\-Recover user guide\&.
 .SH "CONFIGURATION"
 .sp
 To configure Relax\-and\-Recover you have to edit the configuration files in \fI/etc/rear/\fR\&. All \fI*\&.conf\fR files there are part of the configuration, but only \fIsite\&.conf\fR and \fIlocal\&.conf\fR are intended for the user configuration\&. All other configuration files hold defaults for various distributions and should not be changed\&.

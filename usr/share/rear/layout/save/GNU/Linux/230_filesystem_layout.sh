@@ -49,6 +49,15 @@ fi
 # The sorting relies on that mount and findmnt output the first mounted thing first
 # so that in particular what is mounted at '/' is output before other stuff.
 read_filesystems_command="$read_filesystems_command | sort -t ' ' -k 1,1 -u"
+
+# docker daemon mounts file systems for its docker containers
+# see also https://docs.docker.com/storage/storagedriver/device-mapper-driver/#configure-direct-lvm-mode-for-production
+# As it is for container usage only we do not to backup these up or recreate as this disk device is completely under
+# control by docker itself (even the recreation of it incl, the creation of the volume group). Usually this is
+# done via a kind of cookbook (Chef, puppet or ansible)
+docker_is_running=""
+service docker status >/dev/null 2>&1 && docker_is_running="yes"
+
 # Begin writing output to DISKLAYOUT_FILE:
 (
     echo "# Filesystems (only $supported_filesystems are supported)."
@@ -78,6 +87,16 @@ read_filesystems_command="$read_filesystems_command | sort -t ' ' -k 1,1 -u"
         if [ "$fstype" = "iso9660" ] ; then
             Log "$device is CD/DVD type device [fstype=$fstype], skipping."
             continue
+        fi
+        # docker specific exclude part
+        if is_true $docker_is_running ; then
+            # docker daemon/service is running
+            docker_root_dir=$( docker info 2>/dev/null | grep 'Docker Root Dir' | awk '{print $4}' )
+            # If $docker_root_dir is in the beginning of the $mountpoint string then FS is under docker control
+            # and we better exclude from saving the layout,
+            # see https://github.com/rear/rear/issues/1749
+            Log "$device is mounted below $docker_root_dir (mount point $mountpoint is under docker control), skipping."
+            echo "$mountpoint" | grep -q "^$docker_root_dir" && continue
         fi
         # Replace a symbolic link /dev/disk/by-uuid/a1b2c3 -> ../../sdXn
         # by the fully canonicalized target of the link e.g. /dev/sdXn
@@ -127,7 +146,8 @@ read_filesystems_command="$read_filesystems_command | sort -t ' ' -k 1,1 -u"
                 max_mounts=$( $tunefs -l $device | tr -d '[:blank:]' | grep -i 'Maximummountcount:[0-9]*' | cut -d ':' -f 2 )
                 echo -n " max_mounts=$max_mounts"
                 check_interval=$( $tunefs -l $device | tr -d '[:blank:]' | grep -i 'Checkinterval:[0-9]*' | cut -d ':' -f 2 | cut -d '(' -f1 )
-                check_interval=$( is_numeric $check_interval )  # if non-numeric 0 is returned
+                # is_integer outputs '0' if its (first) argument is not an integer (or empty)
+                check_interval=$( is_integer $check_interval )
                 # translate check_interval from seconds to days
                 let check_interval=$check_interval/86400
                 echo -n " check_interval=${check_interval}d"
@@ -245,54 +265,73 @@ read_filesystems_command="$read_filesystems_command | sort -t ' ' -k 1,1 -u"
                 # and on one btrfs_device (e.g. /dev/sda2) there is only one btrfs filesystem.
                 # The following " sed | tr | sed " pipe is ugly ( simplification is left as an exercise for the reader ;-)
                 snapshot_subvolumes_pattern=$( btrfs subvolume list -as $btrfs_mountpoint | tr -s '[:blank:]' ' ' | cut -d ' ' -f 2 | sed -e 's/^/^/' -e 's/$/ |/' | tr -d '\n' | sed -e 's/|$//' )
-                # SLES 12 SP1 and SP2 normal subvolumes that belong to snapper are excluded from being recreated:
-                # Snapper's base subvolume '/@/.snapshots' is excluded because during "rear recover"
-                # that one will be created by "snapper/installation-helper --step 1" which fails if it already exists
-                # (see the code in layout/prepare/GNU/Linux/130_include_mount_subvolumes_code.sh).
-                # Furthermore any normal btrfs subvolume under snapper's base subvolume '/@/.snapshots' is wrong
-                # (see https://github.com/rear/rear/issues/944#issuecomment-238239926
-                # and https://github.com/rear/rear/issues/963).
-                # Because any btrfs subvolume under '@/.snapshots/' lets "snapper/installation-helper --step 1" fail
-                # any btrfs subvolume under '@/.snapshots/' is excluded here from being recreated
-                # to not let "rear recover" fail because of such kind of wrong btrfs subvolumes:
-                snapper_base_subvolume="@/.snapshots"
-                # Exclude usual snapshot subvolumes and subvolumes that belong to snapper.
-                # When SLES12 SP1 (or later) is setup to use btrfs without snapshots
-                # $snapshot_subvolumes_pattern variable will be empty. This special case
-                # must be handled properly when setting up $subvolumes_exclude_pattern
+                # Exclude snapshot subvolumes (if exist).
+                # When there are no snapshot subvolumes $snapshot_subvolumes_pattern variable will be empty.
+                # This special case must be handled properly when setting up $subvolumes_exclude_pattern
                 # otherwise ReaR would not recreate the btrfs subvolumes during recovery
                 # because an empty pattern in the below egrep -v '|...' command would
                 # exclude all lines (see https://github.com/rear/rear/pull/1435):
                 if test -z "$snapshot_subvolumes_pattern" ; then
-                    subvolumes_exclude_pattern="$snapper_base_subvolume"
+                    subvolumes_exclude_pattern=""
                 else
-                    subvolumes_exclude_pattern="$snapshot_subvolumes_pattern|$snapper_base_subvolume"
+                    subvolumes_exclude_pattern="$snapshot_subvolumes_pattern"
                 fi
                 # Output header:
                 echo "# Btrfs normal subvolumes for $btrfs_device at $btrfs_mountpoint"
                 echo "# Format: btrfsnormalsubvol <device> <mountpoint> <btrfs_subvolume_ID> <btrfs_subvolume_path>"
-                # List subvolumes that belong to snapper as comments (deactivated) if such subvolumes exist.
-                # Have them before the other btrfs normal subvolumes because a single comment block looks less confusing
-                # and matches better to the directly before listed (deactivated) snapshot subvolumes comments:
-                if btrfs subvolume list -a $btrfs_mountpoint | grep -q "$snapper_base_subvolume" ; then
-                    echo "# Btrfs subvolumes that belong to snapper are listed here only as documentation."
-                    echo "# Snapper's base subvolume '/@/.snapshots' is deactivated here because during 'rear recover'"
-                    echo "# it is created by 'snapper/installation-helper --step 1' (which fails if it already exists)."
-                    echo "# Furthermore any normal btrfs subvolume under snapper's base subvolume would be wrong."
-                    echo "# See https://github.com/rear/rear/issues/944#issuecomment-238239926"
-                    echo "# and https://github.com/rear/rear/issues/963#issuecomment-240061392"
-                    echo "# how to create a btrfs subvolume in compliance with the SLES12 default brtfs structure."
-                    echo "# In short: Normal btrfs subvolumes on SLES12 must be created directly below '/@/'"
-                    echo "# e.g. '/@/var/lib/mystuff' (which requires that the btrfs root subvolume is mounted)"
-                    echo "# and then the subvolume is mounted at '/var/lib/mystuff' to be accessible from '/'"
-                    echo "# plus usually an entry in /etc/fstab to get it mounted automatically when booting."
-                    echo "# Because any '@/.snapshots' subvolume would let 'snapper/installation-helper --step 1' fail"
-                    echo "# such subvolumes are deactivated here to not let 'rear recover' fail:"
+                # SLES 12 SP1 (and later) special btrfs subvolumes setup detection
+                # cf. similar code in layout/prepare/GNU/Linux/130_include_mount_subvolumes_code.sh
+                SLES12SP1_btrfs_detection_string="@/.snapshots/"
+                if btrfs subvolume get-default $btrfs_mountpoint | grep -q "$SLES12SP1_btrfs_detection_string" ; then
+                    info_message="Doing SLES12-SP1 (and later) btrfs subvolumes setup because the default subvolume path contains '$SLES12SP1_btrfs_detection_string'"
+                    LogPrint $info_message
+                    echo "# $info_message"
+                    # SLES 12 SP1 (or later) normal subvolumes that belong to snapper are excluded from being recreated:
+                    # Snapper's base subvolume '/@/.snapshots' is excluded because during "rear recover"
+                    # that one will be created by "snapper/installation-helper --step 1" which fails if it already exists
+                    # (see the code in layout/prepare/GNU/Linux/130_include_mount_subvolumes_code.sh).
+                    # Furthermore any normal btrfs subvolume under snapper's base subvolume '/@/.snapshots' is wrong
+                    # (see https://github.com/rear/rear/issues/944#issuecomment-238239926
+                    # and https://github.com/rear/rear/issues/963).
+                    # Because any btrfs subvolume under '@/.snapshots/' lets "snapper/installation-helper --step 1" fail
+                    # any btrfs subvolume under '@/.snapshots/' is excluded here from being recreated
+                    # to not let "rear recover" fail because of such kind of wrong btrfs subvolumes:
+                    snapper_base_subvolume="@/.snapshots"
+                    # Exclude usual snapshot subvolumes and subvolumes that belong to snapper.
+                    # When SLES12 SP1 (or later) is setup to use btrfs without snapshots
+                    # $snapshot_subvolumes_pattern variable will be empty. This special case
+                    # must be handled properly when setting up $subvolumes_exclude_pattern
+                    # otherwise ReaR would not recreate the btrfs subvolumes during recovery
+                    # because an empty pattern in the below egrep -v '|...' command would
+                    # exclude all lines (see https://github.com/rear/rear/pull/1435):
                     if test -z "$snapshot_subvolumes_pattern" ; then
-                        # With an empty snapshot_subvolumes_pattern egrep -v '' would exclude all lines:
-                        echo "$subvolume_list" | grep "$snapper_base_subvolume" | sed -e "s/^/#$prefix /"
+                        subvolumes_exclude_pattern="$snapper_base_subvolume"
                     else
-                        echo "$subvolume_list" | egrep -v "$snapshot_subvolumes_pattern" | grep "$snapper_base_subvolume" | sed -e "s/^/#$prefix /"
+                        subvolumes_exclude_pattern="$snapshot_subvolumes_pattern|$snapper_base_subvolume"
+                    fi
+                    # List subvolumes that belong to snapper as comments (deactivated) if such subvolumes exist.
+                    # Have them before the other btrfs normal subvolumes because a single comment block looks less confusing
+                    # and matches better to the directly before listed (deactivated) snapshot subvolumes comments:
+                    if btrfs subvolume list -a $btrfs_mountpoint | grep -q "$snapper_base_subvolume" ; then
+                        echo "# Btrfs subvolumes that belong to snapper are listed here only as documentation."
+                        echo "# Snapper's base subvolume '/@/.snapshots' is deactivated here because during 'rear recover'"
+                        echo "# it is created by 'snapper/installation-helper --step 1' (which fails if it already exists)."
+                        echo "# Furthermore any normal btrfs subvolume under snapper's base subvolume would be wrong."
+                        echo "# See https://github.com/rear/rear/issues/944#issuecomment-238239926"
+                        echo "# and https://github.com/rear/rear/issues/963#issuecomment-240061392"
+                        echo "# how to create a btrfs subvolume in compliance with the SLES12 default brtfs structure."
+                        echo "# In short: Normal btrfs subvolumes on SLES12 must be created directly below '/@/'"
+                        echo "# e.g. '/@/var/lib/mystuff' (which requires that the btrfs root subvolume is mounted)"
+                        echo "# and then the subvolume is mounted at '/var/lib/mystuff' to be accessible from '/'"
+                        echo "# plus usually an entry in /etc/fstab to get it mounted automatically when booting."
+                        echo "# Because any '@/.snapshots' subvolume would let 'snapper/installation-helper --step 1' fail"
+                        echo "# such subvolumes are deactivated here to not let 'rear recover' fail:"
+                        if test -z "$snapshot_subvolumes_pattern" ; then
+                            # With an empty snapshot_subvolumes_pattern egrep -v '' would exclude all lines:
+                            echo "$subvolume_list" | grep "$snapper_base_subvolume" | sed -e "s/^/#$prefix /"
+                        else
+                            echo "$subvolume_list" | egrep -v "$snapshot_subvolumes_pattern" | grep "$snapper_base_subvolume" | sed -e "s/^/#$prefix /"
+                        fi
                     fi
                 fi
                 # Output btrfs normal subvolumes:

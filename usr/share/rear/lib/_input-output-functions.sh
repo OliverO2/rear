@@ -15,6 +15,9 @@
 # that works at least down to bash 3.1 in SLES10:
 LF=$'\n'
 
+# Keep PID of main process (i.e. the main script that the user had launched as 'rear'):
+readonly MASTER_PID=$$
+
 # Collect exit tasks in this array.
 # Without the empty string as initial value ${EXIT_TASKS[@]} would be an unbound variable
 # that would result an error exit if 'set -eu' is used:
@@ -54,31 +57,148 @@ function RemoveExitTask () {
     fi
 }
 
+# Output PIDs of all descendant processes of a parent process PID (specified as $1)
+# i.e. the parent and its direct children plus recursively all subsequent children of children
+# (i.e. parent PID, children PIDs, grandchildren PIDs, great-grandchildren PIDs, and so on)
+# where each PID is output on a separated line.
+# Calling "ps --ppid $parent_pid -o pid=" recursively is needed
+# because otherwise it does not work on all systems.
+# E.g. on SLES10 and SLES11 it would work to simply call "ps -g $parent_pid -o pid="
+#   # sleep 20 | grep foo & ( sleep 30 | grep bar & ) ; sleep 1 ; ps f -g $$
+#   [1] 3622
+#     PID TTY      STAT   TIME COMMAND
+#    3372 pts/0    Ss     0:00 -bash
+#    3621 pts/0    S      0:00  \_ sleep 20
+#    3622 pts/0    S      0:00  \_ grep foo
+#    3627 pts/0    R+     0:00  \_ ps f -g 3372
+#    3625 pts/0    S      0:00 grep bar
+#    3624 pts/0    S      0:00 sleep 30
+# but this way it does no longer work e.g. on SLES12 or openSUSE Leap 42.3
+#   # sleep 20 | grep foo & ( sleep 30 | grep bar & ) ; sleep 1 ; ps f -g $$ ; ps --ppid $$ -o pid,args
+#   [1] 6518
+#     PID TTY      STAT   TIME COMMAND
+#     PID COMMAND
+#    6517 sleep 20
+#    6518 grep --color=auto foo
+#    6524 ps --ppid 2674 -o pid,args
+# where there is really no longer any output of the "ps f -g $$" command.
+# Because of the recursion the output of the deepest nested call appears first
+# so that it lists latest descendants PIDs first and the initial parent PID last
+# (i.e. great-grandchildren PIDs, grandchildren PIDs, children PIDs, parent PID)
+# so that the output ordering is already the right ordering to cleanly terminate
+# a sub-tree of processes below a parent process and finally the parent process
+# (i.e. first terminate great-grandchildren processes, then grandchildren processes,
+# then children processes, and finally terminate the parent process itself).
+# This termination functionality is used in the DoExitTasks() function.
+function descendants_pids () { 
+    local parent_pid=$1
+    # Successfully ignore PIDs that do not exist or do no longer exist:
+    kill -0 $parent_pid 2>/dev/null || return 0
+    # Recursively call this function for the actual children:
+    local child_pid="" 
+    for child_pid in $( ps --ppid $parent_pid -o pid= ) ; do
+        # At least the sub-shell of the $( ps --ppid $parent_pid -o pid= )
+        # is always reported as a child_pid so that the following test avoids
+        # that descendants_pids is uselessly recursively called for it:
+        kill -0 $child_pid 2>/dev/null && descendants_pids $child_pid
+    done
+    # Only show PIDs that actually still exist which skips PIDs of children
+    # that were running a short time (like called programs by this function)
+    # and had already finished here:
+    kill -0 $parent_pid 2>/dev/null && echo $parent_pid || return 0
+}
+
 # Do all exit tasks:
 function DoExitTasks () {
-    Log "Running exit tasks."
-    # kill all running jobs
-    JOBS=( $( jobs -p ) )
-    # when "jobs -p" results nothing then JOBS is still an unbound variable so that
-    # an empty default value is used to avoid 'set -eu' error exit if $JOBS is unset:
-    if test -n ${JOBS:-""} ; then
-        Log "The following jobs are still active:"
-        jobs -l 1>&2
-        kill -9 "${JOBS[@]}" 1>&2
-        # allow system to clean up after killed jobs
+    # First of all restore the ReaR default bash flags and options (see usr/sbin/rear)
+    # because otherwise in case of a bash error exit when e.g. "set -e -u -o pipefail" was set
+    # all the exit tasks related code would also run with "set -e -u -o pipefail" still set
+    # which may abort exit tasks related code anywhere with a "sudden death" bash error exit
+    # where in particular no longer the EXIT_FAIL_MESSAGE (cf. below) would be shown
+    # so that for the user ReaR would "just somehow silently abort" in this case
+    # cf. https://github.com/rear/rear/issues/1747#issuecomment-371055121
+    # and https://github.com/rear/rear/issues/700#issuecomment-327755633
+    apply_bash_flags_and_options_commands "$DEFAULT_BASH_FLAGS_AND_OPTIONS_COMMANDS"
+    # Apply debugscript mode also for the exit tasks:
+    test "$DEBUGSCRIPTS" && set -$DEBUGSCRIPTS_ARGUMENT
+    LogPrint "Exiting $PROGRAM $WORKFLOW (PID $MASTER_PID) and its descendant processes"
+    # First of all wait one second to let descendant processes terminate on their own
+    # e.g. after Ctrl+C by the user descendant processes should terminate on their own
+    # at least the "foreground processes" (with the current terminal process group ID)
+    # but "background processes" would not terminate on their own after Ctrl+C
+    # cf. https://github.com/rear/rear/issues/1712
+    sleep 1
+    # Show descendant processes PIDs with their commands in the log
+    # so that later the plain PIDs in the log get more comprehensible.
+    # What works sufficiently on all systems is "pstree -Aplau $MASTER_PID"
+    # but the pstree command is not available by default in the ReaR recovery system
+    # (cf. https://github.com/rear/rear/issues/1755) so that the ps command is used as fallback.
+    # Because "ps f -g $MASTER_PID -o pid,args" only works on older systems like SLES10 and SLES11
+    # (cf. the above comment for the descendants_pids function)
+    # a last resort fallback "ps --ppid $MASTER_PID -o pid,args" is used for newer systems like SLES12
+    # (at least on SLES12 "ps f -g $MASTER_PID -o pid,args" results non-zero exit code when nothing is shown):
+    Log "$( pstree -Aplau $MASTER_PID || ps f -g $MASTER_PID -o pid,args || ps --ppid $MASTER_PID -o pid,args )"
+    # Some descendant processes commands could be much too long (e.g. a 'tar ...' command)
+    # to be usefully shown completely in the below LogPrint information (could be many lines)
+    # so that the descendant process command output is truncated after at most remaining_columns:
+    local remaining_columns=$(( COLUMNS - 40 ))
+    test $remaining_columns -ge 40 || remaining_columns=40
+    # Terminate all still running descendant processes of $MASTER_PID
+    # but do not termiate the MASTER_PID process itself because
+    # the MASTER_PID process must run the exit tasks below:
+    local descendant_pid=""
+    local not_yet_terminated_pids=""
+    for descendant_pid in $( descendants_pids $MASTER_PID ) ; do
+        # The descendant_pids() function outputs at least MASTER_PID
+        # plus the PID of the subshell of the $( descendants_pids $MASTER_PID )
+        # so that it is tested that a descendant_pid is not MASTER_PID
+        # and that a descendant_pid is still running before SIGTERM is sent:
+        test $MASTER_PID -eq $descendant_pid && continue
+        kill -0 $descendant_pid || continue
+        LogPrint "Terminating descendant process $descendant_pid $( ps -p $descendant_pid -o args= | cut -b-$remaining_columns )"
+        kill -SIGTERM $descendant_pid 1>&2
+        # For each descendant process wait one second to let it terminate to be on the safe side
+        # that e.g. grandchildren can actually cleanly terminate before children get SIGTERM sent
+        # i.e. every child process can cleanly terminate before its parent gets SIGTERM:
         sleep 1
+        if kill -0 $descendant_pid ; then
+            # Keep the current ordering also in not_yet_terminated_pids
+            # i.e. grandchildren before children:
+            not_yet_terminated_pids="$not_yet_terminated_pids $descendant_pid"
+            LogPrint "Descendant process $descendant_pid not yet terminated"
+        fi
+    done
+    # No need to kill a descendant processes if all were already terminated:
+    if test "$not_yet_terminated_pids" ; then
+        # Kill all not yet terminated descendant processes:
+        for descendant_pid in $not_yet_terminated_pids ; do
+            if kill -0 $descendant_pid ; then
+                LogPrint "Killing descendant process $descendant_pid $( ps -p $descendant_pid -o args= | cut -b-$remaining_columns )"
+                kill -SIGKILL $descendant_pid 1>&2
+                # For each killed descendant process wait one second to let it die to be on the safe side
+                # that e.g. grandchildren were actually removed by the kernel before children get SIGKILL sent
+                # i.e. every child process is already gone before its parent process may get SIGKILL so that
+                # the parent (that may wait for its child) has a better chance to still cleanly terminate:
+                sleep 1
+                kill -0 $descendant_pid && LogPrint "Killed descendant process $descendant_pid still there"
+            else
+                # Show a counterpart message to the above 'not yet terminated' message
+                # e.g. after a child process was killed its parent may have terminated on its own:
+                LogPrint "Descendant process $descendant_pid terminated"
+            fi
+        done
     fi
-    for task in "${EXIT_TASKS[@]}" ; do
-        Debug "Exit task '$task'"
-        eval "$task"
+    # Finally run the exit tasks:
+    LogPrint "Running exit tasks"
+    local exit_task=""
+    for exit_task in "${EXIT_TASKS[@]}" ; do
+        Debug "Exit task '$exit_task'"
+        eval "$exit_task"
     done
 }
 
 # The command (actually the function) DoExitTasks is executed on exit from the shell:
 builtin trap "DoExitTasks" EXIT
-
-# Keep PID of main process (i.e. the main script that the user had launched as 'rear'):
-readonly MASTER_PID=$$
 
 # Prepare that STDIN STDOUT and STDERR can be later redirected to anywhere
 # (e.g. both STDOUT and STDERR can be later redirected to the log file).
@@ -87,8 +207,8 @@ readonly MASTER_PID=$$
 # (which is usually the keyboard and display of the user who launched 'rear')
 # the original STDIN STDOUT and STDERR file descriptors are saved as fd6 fd7 and fd8
 # so that ReaR functions for actually intended user messages can use fd7 and fd8
-# to show messages to the user regardless whereto STDOUT and STDERR are redirected
-# and fd6 to get input from the user regardless whereto STDIN is redirected.
+# to show messages to the user regardless where to STDOUT and STDERR are redirected
+# and fd6 to get input from the user regardless where to STDIN is redirected.
 # Duplicate STDIN to fd6 to be used by 'read' in the UserInput function
 # cf. http://tldp.org/LDP/abs/html/x17974.html
 exec 6<&0

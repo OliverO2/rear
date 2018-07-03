@@ -118,6 +118,11 @@ parted -s $device mklabel $label >&2
 my_udevsettle
 EOF
 
+    # There are certrain conditions below that test for AUTORESIZE_PARTITIONS
+    # but all what belongs to autoresizing partitions must only happen in MIGRATION_MODE:
+    local autoresize_partitions=""
+    is_true "$MIGRATION_MODE" && autoresize_partitions="$AUTORESIZE_PARTITIONS"
+
     local block_size device_size sysfs_name
     if [[ -b $device ]] ; then
         sysfs_name=$(get_sysfs_name "$device")
@@ -130,7 +135,10 @@ EOF
             # see https://github.com/rear/rear/issues/544
             if [[ "$label" == "gpt" || "$label" == "gpt_sync_mbr" ]] ; then
                 device_size=$( mathlib_calculate "$device_size - 33*$block_size" )
-                if is_true "$MIGRATION_MODE" ; then
+                # Only if resizing all partitions is explicity wanted
+                # resizing of arbitrary partitions may also happen via the code below
+                # in addition to layout/prepare/default/430_autoresize_all_partitions.sh
+                if is_true "$autoresize_partitions" ; then
                     Log "Size reductions of GPT partitions probably needed."
                 fi
             fi
@@ -145,8 +153,16 @@ EOF
     local flags partition
     while read part disk size pstart name flags partition junk; do
 
-        ### If not in migration mode and start known, use original start.
-        if ! is_true "$MIGRATION_MODE" && test "$pstart" != "unknown" ; then
+        # In layout/save/GNU/Linux/200_partition_layout.sh
+        # in particular a GPT partition name that can contain spaces
+        # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+        # was stored as a percent-encoded string in disklayout.conf
+        # so that here it needs to be percent-decoded:
+        name=$( percent_decode "$name" )
+
+        # Use the partition start value in disklayout.conf
+        # unless resizing all partitions is explicity wanted:
+        if ! is_true "$autoresize_partitions" && test "$pstart" != "unknown" ; then
             start="$pstart"
         fi
 
@@ -159,23 +175,23 @@ EOF
             end="$device_size"
         fi
 
-        ### Extended partitions run to the end of disk... (we assume).
-        if [[ "$name" = "extended" ]] ; then
-            if [[ "$device_size" ]] ; then
-                end="$device_size"
-            else
-                ### We don't know the size of devices that don't exist yet
-                ### replaced by "100%" later on.
-                end=
+        # Extended partitions run to the end of disk (we assume)
+        # only if resizing all partitions is explicity wanted:
+        if is_true "$autoresize_partitions" ; then
+            if [[ "$name" = "extended" ]] ; then
+                if [[ "$device_size" ]] ; then
+                    end="$device_size"
+                else
+                    ### We don't know the size of devices that don't exist yet
+                    ### replaced by "100%" later on.
+                    end=
+                fi
             fi
         fi
 
-        # The 'name' could contain spaces (were replaced with 0%20; need to change this again).
-        name=$(echo "$name" | sed -e 's/0x20/ /g')
-
         # Avoid naming multiple partitions "rear-noname" as this will trigger systemd log messages
         # "Dev dev-disk-by\x2dpartlabel-rear\x2dnoname.device appeared twice with different sysfs paths"
-        if [[ "$name" == "rear-noname" ]]; then
+        if [[ "$name" == "rear-noname" ]] ; then
             name="$(basename "$partition")"
         fi
 
@@ -183,11 +199,21 @@ EOF
             if [[ "$end" ]] ; then
                 end=$( mathlib_calculate "$end - 1" )B
             else
+                # FIXME: I <jsmeix@suse.de> think one cannot silently set the end of a partition to 100%
+                # if there is no partition end value, I think in this case "rear recover" should error out:
                 end="100%"
             fi
+            # The duplicated quoting "'$name'" is there because
+            # parted's internal parser needs single quotes for values with blanks.
+            # In particular a GPT partition name that can contain spaces
+            # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+            # so that when calling parted on command line it must be done like
+            #    parted -s /dev/sdb unit MiB mkpart "'partition name'" 12 34
+            # where the outer quoting "..." is for bash so that
+            # the inner quoting '...' is preserved for parted's internal parser:
             cat >> "$LAYOUT_CODE" <<EOF
 my_udevsettle
-parted -s $device mkpart '$name' ${start}B $end >&2
+parted -s $device mkpart "'$name'" ${start}B $end >&2
 my_udevsettle
 EOF
         else
@@ -198,18 +224,43 @@ EOF
                 start_mb=0
             fi
             end_mb=$( mathlib_calculate "$end / 1024 / 1024" )
+            # The duplicated quoting "'$name'" is there because
+            # parted's internal parser needs single quotes for values with blanks.
+            # In particular a GPT partition name that can contain spaces
+            # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+            # so that when calling parted on command line it must be done like
+            #    parted -s /dev/sdb unit MiB mkpart "'partition name'" 12 34
+            # where the outer quoting "..." is for bash so that
+            # the inner quoting '...' is preserved for parted's internal parser:
             cat  >> "$LAYOUT_CODE" <<EOF
 my_udevsettle
-parted -s $device mkpart '$name' $start_mb $end_mb >&2
+parted -s $device mkpart "'$name'" $start_mb $end_mb >&2
 my_udevsettle
 EOF
         fi
 
-        # the start of the next partition is where this one ends
-        # We can't use $end because of extended partitions
+        # Only if resizing all partitions is explicity wanted
+        # the start of the next partition is where this one ends.
+        # We can't use $end for extended partitions
         # extended partitions have a small actual size as reported by sysfs
-        # in front of a logical partition should be at least 512B empty space
-        if is_true "$MIGRATION_MODE" && test "$name" = "logical" ; then
+        # but this issue is meanwhile fixed via https://github.com/rear/rear/pull/1733 by
+        # https://github.com/rear/rear/pull/1733/commits/6efb681d8b4c6a4d9f20b2900bbea79548c624a8
+        # Additionally in front of a logical partition should be at least 512B empty space
+        # which is probably wrong because certain places in the Internet mention a required gap
+        # of at least 63 sectors (63 * 512 bytes) between extended partition and logical partition
+        # e.g. cf. the German Wikipedia article about Master Boot Record that reads (excerpts):
+        #   Primäre und erweiterte Partitionstabelle
+        #   ...
+        #   Alte Betriebssysteme erwarten den Start einer Partition immer an den Zylindergrenzen.
+        #   Daher ergibt sich auch heute noch bei verbreiteten Betriebssystemen eine Lücke
+        #   von 63 Sektoren zwischen erweiterter Partitionstabelle und dem Startsektor
+        #   der entsprechenden logischen Partition.
+        if is_true "$autoresize_partitions" && test "$name" = "logical" ; then
+            # Without analysis I <jsmeix@suse.de> think by plain looking at the code
+            # that this '+ $block_size' results bad alignment because it usually adds 512B
+            # to the 'small actual size as reported by sysfs' which is e.g. 2 * 512B
+            # so that the result is the original start of disklayout.conf + 3 * 512B
+            # i.e. a new partition alignment to '3 * 512B' units:
             start=$( mathlib_calculate "$start + ${size%B} + $block_size" )
         else
             start=$( mathlib_calculate "$start + ${size%B}" )
@@ -217,12 +268,15 @@ EOF
 
         # round starting size to next multiple of 4096
         # 4096 is a good match for most device's block size
-        start=$(( $start + 4096 - ( $start % 4096 ) ))
+        # only if resizing all partitions is explicity wanted:
+        if is_true "$autoresize_partitions" ; then
+            start=$(( $start + 4096 - ( $start % 4096 ) ))
+        fi
 
         # Get the partition number from the name
-        local number=$(get_partition_number "$partition")
+        local number=$( get_partition_number "$partition" )
 
-        local flags="$(echo $flags | tr ',' ' ')"
+        local flags="$( echo $flags | tr ',' ' ' )"
         local flag
         for flag in $flags ; do
             if [[ "$flag" = "none" ]] ; then
@@ -238,10 +292,19 @@ EOF
         # Explicitly name GPT partitions.
         # For the SUSE specific gpt_sync_mbr partitioning scheme
         # see https://github.com/rear/rear/issues/544
+        # The quoted duplicated quoting \"'$name'\" is there because
+        # parted's internal parser needs single quotes for values with blanks.
+        # In particular a GPT partition name that can contain spaces
+        # like 'EFI System Partition' cf. https://github.com/rear/rear/issues/1563
+        # so that when calling parted on command line it must be done like
+        #    parted -s /dev/sdb unit MiB mkpart "'partition name'" 12 34
+        # where the outer quoting "..." is for bash which neeeds to be quoted \"...\" here
+        # because there is a outermost quoting "..." of the echo command
+        # and the inner quoting '...' is preserved for parted's internal parser:
         if [[ "$label" = "gpt" || "$label" == "gpt_sync_mbr" ]] && [[ "$name" != "rear-noname" ]] ; then
             (
             echo "my_udevsettle"
-            echo "parted -s $device name $number '$name' >&2"
+            echo "parted -s $device name $number \"'$name'\" >&2"
             echo "my_udevsettle"
             ) >> $LAYOUT_CODE
         fi
