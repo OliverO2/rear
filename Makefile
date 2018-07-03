@@ -119,6 +119,8 @@ install-config:
 	install -d -m0700 $(DESTDIR)$(sysconfdir)/rear/cert/
 	-[[ ! -e $(DESTDIR)$(sysconfdir)/rear/local.conf ]] && \
 		install -Dp -m0600 etc/rear/local.conf $(DESTDIR)$(sysconfdir)/rear/local.conf
+	-[[ ! -e $(DESTDIR)$(sysconfdir)/rear/site.conf ]] && \
+		install -Dp -m0600 etc/rear/site.conf $(DESTDIR)$(sysconfdir)/rear/site.conf
 	-[[ ! -e $(DESTDIR)$(sysconfdir)/rear/os.conf && -e etc/rear/os.conf ]] && \
 		install -Dp -m0600 etc/rear/os.conf $(DESTDIR)$(sysconfdir)/rear/os.conf
 	-find $(DESTDIR)$(sysconfdir)/rear/ -name '.gitignore' -exec rm -rf {} \; &>/dev/null
@@ -206,7 +208,7 @@ rpm: srpm
 deb: dist
 	@echo -e "\033[1m== Building DEB package $(name)-$(distversion) ==\033[0;0m"
 	cp -r build/$(name)-$(distversion)/packaging/debian/ build/$(name)-$(distversion)/
-	cd build/$(name)-$(distversion) ; dch -v $(distversion) -b -M build package
+	cd build/$(name)-$(distversion) ; dch -r -b -M build package
 	cd build/$(name)-$(distversion) ; debuild -us -uc -i -b --lintian-opts --profile debian
 	mv build/$(name)_*deb dist/
 
