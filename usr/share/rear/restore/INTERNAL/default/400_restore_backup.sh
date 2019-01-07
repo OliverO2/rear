@@ -1,19 +1,13 @@
-# Restore a backup via INTERNAL/system-backup
+# Restore a backup via INTERNAL/infix-backup
 
-[[ -n "$INTERNAL_BACKUP_TARGET_CONFIGURATION" ]] || Error "Configuration variable INTERNAL_BACKUP_TARGET_CONFIGURATION not set"
-[[ -n "$INTERNAL_BACKUP_NETWORK_REPOSITORY_HOST" ]] || Error "Configuration variable INTERNAL_BACKUP_NETWORK_REPOSITORY_HOST not set"
-[[ -n "$INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION" ]] || Error "Configuration variable INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION not set"
-[[ -n "$INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION" ]] || Error "Configuration variable INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION not set"
-[[ -n "$INTERNAL_BACKUP_DISK_REPOSITORY_LOCATION" ]] || Error "Configuration variable INTERNAL_BACKUP_DISK_REPOSITORY_LOCATION not set"
-
-disk_mount_directory="/mnt/backup"
+disk_mount_directory="/mnt/backup/"
 
 #
 # Discover repositories and let the user choose one
 #
 while true; do
     # Discover available repositories (network plus external USB disks)
-    repository_locations=("Network $INTERNAL_BACKUP_NETWORK_REPOSITORY_HOST")
+    repository_locations=("Default")
     for device in /dev/sd*1; do
         if [[ -b "$device" ]]; then
             device_info=$(
@@ -57,22 +51,18 @@ Please choose a repository location to restore from
 $(printf '%s\n' "${repository_locations[@]}" | cat -n)
 "
 
-    repository_choice="$(UserInput -I RESTORE_INTERNAL_SELECT_REPOSITORY -t 0 -p "Enter a choice")"
+    choice_input="$(UserInput -I RESTORE_INTERNAL_SELECT_REPOSITORY -t 0 -p "Enter a choice")"
 
-    case "$repository_choice" in
-        ([1-9])
-            if [[ "$repository_choice" -le "${#repository_locations[@]}" ]]; then
-                repository_location="${repository_locations[repository_choice-1]}"
-                break
-            else
-                UserOutput "Choice $repository_choice is larger than the number of repository locations"
-            fi
-            ;;
-
-        (*)
-            UserOutput "Choice $repository_choice is not a number"
-            ;;
-    esac
+    if [[ "$choice_input" =~ ^[1-9][0-9]*$ ]]; then
+        if [[ "$choice_input" -le "${#repository_locations[@]}" ]]; then
+            repository_location="${repository_locations[choice_input-1]}"
+            break
+        else
+            UserOutput "Choice $choice_input is larger than the number of repository locations"
+        fi
+    else
+        UserOutput "Choice '$choice_input' is not a positive number"
+    fi
 done
 
 
@@ -80,19 +70,17 @@ done
 # Prepare the chosen repository for access
 #
 case "$repository_location" in
-    "Network "*)
-        repository="$INTERNAL_BACKUP_NETWORK_REPOSITORY_LOCATION"
-        remote_user_option=("${INTERNAL_BACKUP_NETWORK_REMOTE_USER_OPTION[@]}")
-
-        LogUserOutput "Repository located at $repository"
+    "Default")
+        repository_options=()
+        LogUserOutput "Using default repository"
         ;;
 
     "Disk "*)
         read -r -a repository_location_components <<< "$repository_location"
         device="${repository_location_components[1]}"
 
-        repository="$disk_mount_directory$INTERNAL_BACKUP_DISK_REPOSITORY_LOCATION"
-        remote_user_option=()
+        repository_directory="$disk_mount_directory/$(basename "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY")"
+        repository_options=("--repository_directory" "$repository_directory")
 
         while ! cryptsetup --readonly open --type luks "$device" backup; do
             LogUserOutput "Could not decrypt disk partition $device"
@@ -106,33 +94,53 @@ case "$repository_location" in
         StopIfError "Could not mount encrypted repository partition"
         AddExitTask umount "$disk_mount_directory"
 
-        LogUserOutput "Repository located on disk partition $device at $INTERNAL_BACKUP_DISK_REPOSITORY_LOCATION"
+        LogUserOutput "Repository located on disk partition $device at $repository_directory"
         ;;
 esac
+
+
+#
+# Display available backup sets
+#
+available_backup_set_limit=10
+IFS=$'\n' GLOBIGNORE='*' available_backup_sets=($(LC_ALL=C.UTF-8 infix-backup --quiet "${repository_options[@]}" backup list --sets --limit $available_backup_set_limit))
+StopIfError "Could not find available backups in the repository"
+unset IFS GLOBIGNORE
+
+
+#
+# Let the user choose which backup set to restore from
+#
+while true; do
+    LogUserOutput "
+Please choose the backup set to restore from. These are the recent
+$available_backup_set_limit backup sets available in the repository:
+
+$(printf '%s\n' "${available_backup_sets[@]}" | cat -n)
+"
+
+    choice_input="$(UserInput -I RESTORE_INTERNAL_SELECT_BACKUP_SET -t 0 -p "Enter a choice")"
+
+    if [[ "$choice_input" =~ ^[1-9][0-9]*$ ]]; then
+        if [[ "$choice_input" -le "${#available_backup_sets[@]}" ]]; then
+            selected_backup_set="$(sed 's; -- .*$;;' <<< "${available_backup_sets[choice_input-1]}")"
+            break
+        else
+            UserOutput "Choice $choice_input is larger than the number of available backup sets"
+        fi
+    else
+        UserOutput "Choice '$choice_input' is not a positive number"
+    fi
+done
 
 
 #
 # Discover available sources
 #
 
-available_sources=($(LC_ALL=C.UTF-8 system-backup --quiet list-sources --configuration "$INTERNAL_BACKUP_TARGET_CONFIGURATION" --filter backup))
+IFS=$'\n' GLOBIGNORE='*' available_sources=($(LC_ALL=C.UTF-8 infix-backup --source_root "$TARGET_FS_ROOT" --quiet list-sources --filter backup))
 StopIfError "Could not discover configured backup sources"
-
-
-#
-# Display available backups
-#
-available_backups="$(LC_ALL=C.UTF-8 system-backup --quiet "${remote_user_option[@]}" backup list \
-    --repository "$repository" --sources "${available_sources[0]}" | tail -3 | sed 's;/[^/]*$;;')"
-StopIfError "Could not find available backups in repository $repository"
-LogUserOutput "
-Last 3 backups available in the repository $repository:
-
-$available_backups
-
-About to restore from the last backup.
-
-"
+unset IFS GLOBIGNORE
 
 
 #
@@ -148,23 +156,21 @@ $(printf '%s\n' "${available_sources[@]}" | cat -n)
     choice_input="$(UserInput -I RESTORE_INTERNAL_SELECT_SOURCES -t 0 -p "Enter comma-separated values, or leave empty for all")"
 
     IFS=',' read -r -a choices <<< "$choice_input"
+    unset IFS
 
-    for repository_choice in "${choices[@]}"; do
-        case "$repository_choice" in
-            ([1-9])
-                if [ "$repository_choice" -le "${#available_sources[@]}" ]; then
-                    selected_source="${available_sources[repository_choice-1]}"
-                    selected_sources=("${selected_sources[@]}" "$selected_source")
-                else
-                    UserOutput "Choice $repository_choice is larger than the number of sources"
-                    continue 2
-                fi
-                ;;
-            (*)
-                UserOutput "Choice $repository_choice is not a number"
+    for choice in "${choices[@]}"; do
+        if [[ "$choice" =~ ^[1-9][0-9]*$ ]]; then
+            if [[ "$choice" -le "${#available_sources[@]}" ]]; then
+                selected_source="$(sed 's;^'"$TARGET_FS_ROOT"';;' <<< "${available_sources[choice-1]}")"
+                selected_sources=("${selected_sources[@]}" "$selected_source")
+            else
+                UserOutput "Choice $choice is larger than the number of sources"
                 continue 2
-                ;;
-        esac
+            fi
+        else
+            UserOutput "Choice '$choice' is not a positive number"
+            continue 2
+        fi
     done
 
     break
@@ -175,33 +181,23 @@ done
 # Restore chosen sources from the backup
 #
 LogUserOutput "
-Recovering from backup in repository $repository"
-if [ ${#selected_sources[@]} -eq 0 ]; then
+Recovering from backup '$selected_backup_set'"
+if [[ ${#selected_sources[@]} -eq 0 ]]; then
     LogUserOutput "Restoring all sources"
     source_options=()
 else
     LogUserOutput "Restoring sources ${selected_sources[*]}"
-    source_options=("--sources" "${selected_sources[@]}")
+    source_options=("--sources" "${selected_sources[@]}" "--end_of_list")
 fi
-LC_ALL=C.UTF-8 system-backup "${remote_user_option[@]}" restore-recent --complete_existing_directories \
-    --repository "$repository" --configuration "$INTERNAL_BACKUP_TARGET_CONFIGURATION" "${source_options[@]}" -- "$TARGET_FS_ROOT"
-StopIfError "Could not successfully finish system-backup restore"
+LC_ALL=C.UTF-8 infix-backup "${repository_options[@]}" \
+    restore-recent --complete_existing_directories "${source_options[@]}" -d "$selected_backup_set" "$TARGET_FS_ROOT"
+StopIfError "Could not successfully finish infix-backup restore"
 
 
 #
 # Make snapshots for just-restored sources where possible
 #
-restored_snapshot_sources=($(LC_ALL=C.UTF-8 system-backup --quiet list-sources \
-    --configuration "$INTERNAL_BACKUP_TARGET_CONFIGURATION" "${source_options[@]}" --filter snapshot+backup))
-restore_date_time="$(date --iso-8601=s)"
-for restored_snapshot_source in "${restored_snapshot_sources[@]}"; do
-    subvolume="$TARGET_FS_ROOT$restored_snapshot_source"
-    snapshot="$subvolume-$restore_date_time-restore"
-    if [[ -d "$TARGET_FS_ROOT$restored_snapshot_source" ]]; then
-        LogUserOutput "Creating snapshot $snapshot"
-        btrfs subvolume snapshot "$subvolume" "$snapshot"
-    fi
-done
+LC_ALL=C.UTF-8 infix-backup --source_root "$TARGET_FS_ROOT" snapshot create
 
 
 #
@@ -214,4 +210,4 @@ in the shell to continue recovery."
 rear_shell "Did the backup properly restore to $TARGET_FS_ROOT? Are you ready to continue recovery? "
 
 LogUserOutput "
-system-backup restore finished successfully"
+infix-backup restore finished successfully"
