@@ -1,8 +1,8 @@
 # Generate code to partition the disks.
 
-if ! has_binary parted; then
-    return
-fi
+# The parted command is mandatory,
+# see https://github.com/rear/rear/issues/1933#issuecomment-430207057
+has_binary parted || Error "Cannot find 'parted' command"
 
 # Test for features of parted.
 
@@ -12,10 +12,9 @@ FEATURE_PARTED_ANYUNIT=
 FEATURE_PARTED_ALIGNMENT=
 
 # Test by using the parted version numbers...
-parted_version=$(get_version parted -v)
+parted_version=$( get_version parted -v )
 
-[ "$parted_version" ]
-BugIfError "Function get_version could not detect parted version."
+test "$parted_version" || BugError "Function get_version could not detect parted version"
 
 if version_newer "$parted_version" 2.0 ; then
     # All features supported
@@ -249,10 +248,10 @@ EOF
         # which is probably wrong because certain places in the Internet mention a required gap
         # of at least 63 sectors (63 * 512 bytes) between extended partition and logical partition
         # e.g. cf. the German Wikipedia article about Master Boot Record that reads (excerpts):
-        #   Primäre und erweiterte Partitionstabelle
+        #   Primaere und erweiterte Partitionstabelle
         #   ...
         #   Alte Betriebssysteme erwarten den Start einer Partition immer an den Zylindergrenzen.
-        #   Daher ergibt sich auch heute noch bei verbreiteten Betriebssystemen eine Lücke
+        #   Daher ergibt sich auch heute noch bei verbreiteten Betriebssystemen eine Luecke
         #   von 63 Sektoren zwischen erweiterter Partitionstabelle und dem Startsektor
         #   der entsprechenden logischen Partition.
         if is_true "$autoresize_partitions" && test "$name" = "logical" ; then

@@ -33,6 +33,14 @@ blacklist {
         fi
     fi
 
+    # it is recommended to reload udev in order to have /sys updated with information from all the device path before activating multipath. 
+    # This could avoid situation like https://github.com/rear/rear/issues/2016 and https://github.com/rear/rear/issues/2002
+    udevadm control --reload-rules
+    udevadm trigger
+    # Wait for udev trigger to finish device detection/creation
+    udevadm settle
+
+    # multipath activation. 
     LogPrint "Activating multipath"
     list_mpath_device=1
     modprobe dm-multipath >&2 && LogPrint "multipath activated" || LogPrint "Failed to load dm-multipath module"
@@ -95,8 +103,17 @@ blacklist {
         fi
 
         # Search and list mpath device.
+        # If multipath is used with "friendly_name" option, the output of "multipath -l" is
+        #   <friendly_mpath_name> (<mpath UUID>) <dm-name> <Vendor,type>
+        #   rootvg (3600507680c82004cf800000000000306) dm-2 IBM,2145 
+        # while it is a bit different when "friendly_name" is disabled
+        #   <mpath UUID> <dm-name> <Vendor,type>
+        #   36005076400810051380000000000007b dm-2 IBM,2145
+        # so that "dm-" can be the 3rd or 2nd field which means
+        # we let awk print the line where "dm-" appears
+        # cf. https://github.com/rear/rear/pull/1889
         LogPrint "Listing multipath device found"
-        LogPrint "$(multipath -l | awk '$3~/dm-/{ DEVICES=$0} ; $1~/size=/ { print DEVICES" "$1 }' 2>&1)"
+        LogPrint "$(multipath -l | awk '/dm-/{ DEVICES=$0 } ; $1~/size=/ { print DEVICES" "$1 }' 2>&1)"
     fi
 fi
 

@@ -5,6 +5,9 @@
 # USING_UEFI_BOOTLOADER empty or no explicit 'true' value means NO UEFI:
 is_true $USING_UEFI_BOOTLOADER || return 0
 
+# Don't do any guess work for boot loader, we will use systemd-bootx64.efi.
+is_true $EFI_STUB && return 0
+
 # Artificial 'for' clause that is run only once
 # to be able to 'continue' with the code after it
 # as soon as an usable UEFI bootloader file is found
@@ -12,7 +15,7 @@ is_true $USING_UEFI_BOOTLOADER || return 0
 # which avoids dowdy looking code with deeply nested 'if...else' conditions:
 for dummy in "once" ; do
     if test -f "$SECURE_BOOT_BOOTLOADER" ; then
-      UEFI_BOOTLOADER="$SECURE_BOOT_BOOTLOADER"
+        UEFI_BOOTLOADER="$SECURE_BOOT_BOOTLOADER"
     fi
 
     # When the user has specified UEFI_BOOTLOADER in /etc/rear/local.conf use it if exists and is a regular file.

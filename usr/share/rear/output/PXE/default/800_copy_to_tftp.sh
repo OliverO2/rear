@@ -31,8 +31,8 @@ else
 fi
 
 
-cp -pL $v "$KERNEL_FILE" "$PXE_TFTP_LOCAL_PATH/$PXE_KERNEL" >&2
-cp -a $v "$TMP_DIR/$REAR_INITRD_FILENAME" "$PXE_TFTP_LOCAL_PATH/$PXE_INITRD" >&2
+cp -pL $v "$KERNEL_FILE" "$PXE_TFTP_LOCAL_PATH/$PXE_KERNEL" || Error "Failed to copy KERNEL_FILE '$KERNEL_FILE'"
+cp -a $v "$TMP_DIR/$REAR_INITRD_FILENAME" "$PXE_TFTP_LOCAL_PATH/$PXE_INITRD" || Error "Failed to copy initrd '$REAR_INITRD_FILENAME'"
 echo "$VERSION_INFO" >"$PXE_TFTP_LOCAL_PATH/$PXE_MESSAGE"
 # files must be readable for others for PXE
 chmod 444 "$PXE_TFTP_LOCAL_PATH/$PXE_KERNEL"
@@ -54,6 +54,9 @@ if [[ ! -z "$PXE_TFTP_URL" ]] && [[ "$PXE_RECOVER_MODE" = "unattended" ]] ; then
     fi
     syslinux_modules_dir=$( find_syslinux_modules_dir menu.c32 )
     [[ -z "$syslinux_modules_dir" ]] && syslinux_modules_dir=$(dirname $PXELINUX_BIN)
+    cp $v $syslinux_modules_dir/ldlinux.c32 $BUILD_DIR/tftpbootfs >&2
+    cp $v $syslinux_modules_dir/libcom32.c32 $BUILD_DIR/tftpbootfs >&2
+    cp $v $syslinux_modules_dir/libutil.c32 $BUILD_DIR/tftpbootfs >&2
     cp $v $syslinux_modules_dir/menu.c32 $BUILD_DIR/tftpbootfs >&2
     cp $v $syslinux_modules_dir/chain.c32 $BUILD_DIR/tftpbootfs >&2
     cp $v $syslinux_modules_dir/hdt.c32 $BUILD_DIR/tftpbootfs >&2
@@ -77,3 +80,4 @@ else
     # Add to result files
     RESULT_FILES=( "${RESULT_FILES[@]}" "$PXE_TFTP_LOCAL_PATH/$PXE_KERNEL" "$PXE_TFTP_LOCAL_PATH/$PXE_INITRD" "$PXE_TFTP_LOCAL_PATH/$PXE_MESSAGE" )
 fi
+

@@ -20,6 +20,9 @@ done >$copy_as_is_exclude_file
 # Copy files and directories as-is into the recovery system except the excluded ones and
 # remember what files and directories were actually copied in a copy_as_is_filelist_file
 # which is the reason that the first 'tar' must be run in verbose mode.
+# Symbolic links must be copied as symbolic links ('tar -h' must not be used here)
+# because 'tar -h' does not finish and blows up the recovery system to Gigabytes,
+# see https://github.com/rear/rear/pull/1636
 # It is crucial that pipefail is not set (cf. https://github.com/rear/rear/issues/700)
 # to make it work fail-safe even in case of non-existent files in the COPY_AS_IS array because
 # in case of non-existent files 'tar' is "Exiting with failure status" like in the following example:
@@ -54,9 +57,13 @@ Log "copy_as_is_executables = ${copy_as_is_executables[@]}"
 # add them to the LIBS list if they are not yet included in the copied files:
 Log "Adding required libraries of executables in all the copied files to LIBS"
 local required_library=""
-for required_library in $( RequiredSharedOjects "${copy_as_is_executables[@]}" ) ; do
-    # Skip when the required library was already actually copied by 'tar' above:
-    grep -q "$required_library" $copy_as_is_filelist_file && continue
+for required_library in $( RequiredSharedObjects "${copy_as_is_executables[@]}" ) ; do
+    # Skip when the required library was already actually copied by 'tar' above.
+    # grep for a full line (copy_as_is_filelist_file contains 1 file name per line)
+    # to avoid that libraries get skipped when their library path is a substring
+    # of another already copied library, e.g. do not skip /path/to/lib when
+    # /other/path/to/lib was already copied, cf. https://github.com/rear/rear/pull/1976
+    grep -q "^${required_library}\$" $copy_as_is_filelist_file && continue
     # Skip when the required library is already in LIBS:
     IsInArray "$required_library" "${LIBS[@]}" && continue
     Log "Adding required library '$required_library' to LIBS"
@@ -79,6 +86,10 @@ mkdir $v -p $ROOTFS_DIR/etc/rear
 # This will do same job as lines below.
 # On top of that, it does not throw log warning like:
 # "cp: missing destination file operand after"
-# if hidden file (.<filename>) is missing in $CONFIG_DIR
-cp $v -r $CONFIG_DIR/. $ROOTFS_DIR/etc/rear/ 1>&2
-
+# if hidden file (.<filename>) is missing in $CONFIG_DIR.
+# To avoid dangling symlinks copy the content of the symlink target via '-L'
+# which could lead to same content that exists in two independent regular files but
+# for configuration files there is no other option than copying dereferenced files
+# since files in $CONFIG_DIR specified with '-c /path' get copied into '/etc/rear'
+# in the ReaR recovery system, cf. https://github.com/rear/rear/issues/1923
+cp $v -r -L $CONFIG_DIR/. $ROOTFS_DIR/etc/rear/

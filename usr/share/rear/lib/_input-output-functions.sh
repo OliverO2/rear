@@ -235,7 +235,7 @@ QuietAddExitTask "(( EXIT_FAIL_MESSAGE )) && echo '${MESSAGE_PREFIX}$PROGRAM $WO
 
 # USR1 is used to abort on errors.
 # It is not using PrintError but does direct output to the original STDERR.
-# Set EXIT_FAIL_MESSAGE to 0 to aviod an additional failed message via the QuietAddExitTask above:
+# Set EXIT_FAIL_MESSAGE to 0 to avoid an additional failed message via the QuietAddExitTask above:
 builtin trap "EXIT_FAIL_MESSAGE=0 ; echo '${MESSAGE_PREFIX}Aborting due to an error, check $RUNTIME_LOGFILE for details' 1>&8 ; kill $MASTER_PID" USR1
 
 # Make sure nobody else can use trap:
@@ -246,7 +246,12 @@ function trap () {
 # For actually intended user messages output to the original STDOUT
 # but only when the user launched 'rear -v' in verbose mode:
 function Print () {
-    test "$VERBOSE" && echo -e "${MESSAGE_PREFIX}$*" 1>&7 || true
+    # It is crucial to append to /dev/$DISPENSABLE_OUTPUT_DEV when $DISPENSABLE_OUTPUT_DEV is not 'null'.
+    # In debugscripts mode $DISPENSABLE_OUTPUT_DEV is 'stderr' (see usr/sbin/rear)
+    # and /dev/stderr is fd2 which is redirected to append to RUNTIME_LOGFILE (see usr/sbin/rear)
+    # so that 2>/dev/stderr would truncate RUNTIME_LOGFILE to zero size (see 'REDIRECTION' in "man bash")
+    # but 2>>/dev/stderr does not change things so that fd2 output is still appended to RUNTIME_LOGFILE:
+    { test "$VERBOSE" && echo "${MESSAGE_PREFIX}$*" 1>&7 || true ; } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
 }
 
 # For normal output messages that are intended for user dialogs.
@@ -256,13 +261,13 @@ function Print () {
 # but output to the original STDOUT without a MESSAGE_PREFIX because
 # MESSAGE_PREFIX is not helpful in normal user dialog output messages:
 function UserOutput () {
-    echo -e "$*" 1>&7 || true
+    { echo "$*" 1>&7 || true ; } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
 }
 
 # For actually intended user error messages output to the original STDERR
 # regardless whether or not the user launched 'rear' in verbose mode:
 function PrintError () {
-    echo -e "${MESSAGE_PREFIX}$*" 1>&8 || true
+    { echo "${MESSAGE_PREFIX}$*" 1>&8 || true ; } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
 }
 
 # For messages that should only appear in the log file output to the current STDERR
@@ -270,12 +275,15 @@ function PrintError () {
 function Log () {
     # Have a timestamp with nanoseconds precision in any case
     # so that any subsequent Log() calls get logged with precise timestamps:
-    local timestamp=$( date +"%Y-%m-%d %H:%M:%S.%N " )
-    if test $# -gt 0 ; then
-        echo "${MESSAGE_PREFIX}${timestamp}$*" || true
-    else
-        echo "${MESSAGE_PREFIX}${timestamp}$( cat )" || true
-    fi 1>&2
+    { local timestamp=$( date +"%Y-%m-%d %H:%M:%S.%N " )
+      local log_message=""
+      if test $# -gt 0 ; then
+          log_message="${MESSAGE_PREFIX}${timestamp}$*"
+      else
+          log_message="${MESSAGE_PREFIX}${timestamp}$( cat )"
+      fi
+    } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
+    echo "$log_message" 1>&2 || true
 }
 
 # For messages that should only appear in the log file when the user launched 'rear -d' in debug mode:
@@ -324,10 +332,11 @@ function LogToSyslog () {
 # see https://github.com/rear/rear/issues/729
 function has_binary () {
     for bin in $@ ; do
-        # Suppress success output via stdout (but keep failure output via stderr):
-        if type $bin 1>/dev/null ; then
-            return 0
-        fi
+        # Suppress success output via stdout which is crucial when has_binary is called
+        # in other functions that provide their intended function results via stdout
+        # to not pollute intended function results with intermixed has_binary stdout
+        # (e.g. the RequiredSharedObjects function) but keep failure output via stderr:
+        type $bin 1>/dev/null && return 0
     done
     return 1
 }
@@ -341,38 +350,7 @@ function get_path () {
     type -P $1
 }
 
-# Error exit:
-function Error () {
-    LogPrintError "ERROR: $*"
-    LogToSyslog "ERROR: $*"
-    # TODO: I <jsmeix@suse.de> wonder if the "has_binary caller" test is still needed nowadays
-    # because for me on SLE10 with bash-3.1-24 up to SLE12 with bash-4.2 'caller' is a shell builtin:
-    if has_binary caller ; then
-        # Print stack strace in reverse order to the current STDERR which is (usually) the log file:
-        (   echo "==== ${MESSAGE_PREFIX}Stack trace ===="
-            local c=0;
-            while caller $((c++)) ; do
-                # nothing to do
-                :
-            done | awk ' { l[NR]=$3":"$1" "$2 }
-                         END { for (i=NR; i>0;) print "Trace "NR-i": "l[i--] }
-                       '
-            echo "${MESSAGE_PREFIX}Message: $*"
-            echo "== ${MESSAGE_PREFIX}End stack trace =="
-        ) 1>&2
-    fi
-    # Make sure Error exits the master process, even if called from child processes:
-    kill -USR1 $MASTER_PID
-}
-
-# If return code is non-zero, bail out:
-function StopIfError () {
-    if (( $? != 0 )) ; then
-        Error "$@"
-    fi
-}
-
-# Output the source file of the actual caller script:
+# Output the source file of the actual caller script and its line number:
 function CallerSource () {
     # Get the source file of actual caller script.
     # Usually this is ${BASH_SOURCE[1]} but CallerSource is also called
@@ -413,9 +391,85 @@ function CallerSource () {
     echo "Relax-and-Recover"
 }
 
+# Error exit:
+function Error () {
+    # Get the last sourced script out of the log file:
+    # Using the CallerSource function is not sufficient here because CallerSource results
+    # the file where this Error function is called which can also be a lib/*-functions.sh
+    # but showing *-functions.sh would not be as helpful for the user as the last actual script.
+    # Each sourced script gets logged as 'timestamp Including sub-path/to/script_file_name.sh' and
+    # valid script files names are of the form NNN_script_name.sh (i.e. with leading 3-digit number)
+    # but also the outdated scripts with leading 2-digit number get sourced
+    # see the SourceStage function in lib/framework-functions.sh
+    # so that we grep for script files names with two or more leading numbers:
+    { local last_sourced_script_log_entry=( $( grep -o ' Including .*/[0-9][0-9].*\.sh' $RUNTIME_LOGFILE | tail -n 1 ) )
+      # The last_sourced_script_log_entry contains: Including sub-path/to/script_file_name.sh
+      local last_sourced_script_sub_path="${last_sourced_script_log_entry[1]}"
+      local last_sourced_script_filename="$( basename $last_sourced_script_sub_path )"
+      # When it errors out in sbin/rear last_sourced_script_filename is empty which would result bad looking output
+      # cf. https://github.com/rear/rear/issues/1965#issuecomment-439437868
+      test "$last_sourced_script_filename" || last_sourced_script_filename="$SCRIPT_FILE"
+    } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
+    # Do not log the error message right now but after the currenly last log messages were shown:
+    PrintError "ERROR: $*"
+    # Show some additional hopefully meaningful output on the user's terminal
+    # (no need to log that again here because it is already in the log file)
+    # in particular the normal stdout and stderr messages of the last called programs
+    # to make the root cause more obvious to the user without the need to analyze the log file
+    # cf. https://github.com/rear/rear/issues/1875#issuecomment-407039065
+    PrintError "Some latest log messages since the last called script $last_sourced_script_filename:"
+    # Extract lines starting when the last script was sourced (logged as 'Including sub-path/to/script.sh')
+    # but do not use last_sourced_script_sub_path because it contains '/' characters that let sed fail with
+    #   sed: -e expression #1, char ...: extra characters after command
+    # because the '/' characters would need to be escaped in the sed expression so that
+    # we simply use last_sourced_script_filename in the sed expression.
+    # Extract at most up to a line that is usually logged as '++ Error ...' or '++ BugError ...'
+    # (but do not stop at lines that are logged like '++ StopIfError ...' or '++ PrintError ...')
+    # if such a '+ Error' or '+ BugError' line exists, otherwise sed proceeds to the end
+    # (the sed pattern '[Bug]*Error' is fuzzy because it would also match things like 'uuggError').
+    # The reason to stop at a line that contains '+ [Bug]*Error ' is that in debugscripts mode '-D'
+    # a BugError or Error function call with a multi line error message (e.g. BugError does that)
+    # results 'set -x' debug output of that function call in the log file that looks like:
+    #   ++ [Bug]Error 'first error message line
+    #   second error message line
+    #   third error message line
+    #   ...
+    #   last error message line'
+    # Because of the newlines in the error message subsequent lines appear without a leading '+' character
+    # so that those debug output lines are indistinguishable from normal stdout/stderr output of programs,
+    # cf. https://github.com/rear/rear/pull/1877
+    # Thereafter ('+ [Bug]*Error ' lines were needed before) skip 'set -x' lines (lines that start with a '+' character).
+    # Show at most the last 8 lines because too much before the actual error may cause more confusion than help.
+    # Add two spaces indentation for better readability what those extracted log file lines are.
+    # Some messages could be too long to be usefully shown on the user's terminal so that they are truncated after 200 bytes:
+    { local last_sourced_script_log_messages="$( sed -n -e "/Including .*$last_sourced_script_filename/,/+ [Bug]*Error /p" $RUNTIME_LOGFILE | grep -v '^+' | tail -n 8 | sed -e 's/^/  /' | cut -b-200 )" ; } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
+    PrintError "$last_sourced_script_log_messages"
+    Log "ERROR: $*"
+    LogToSyslog "ERROR: $*"
+    # Print stack strace in reverse order to the current STDERR which is (usually) the log file:
+    ( echo "===== ${MESSAGE_PREFIX}Stack trace ====="
+      local c=0;
+      while caller $((c++)) ; do
+          :
+      done | awk ' { l[NR]=$3":"$1" "$2 }
+                   END { for (i=NR; i>0;) print "Trace "NR-i": "l[i--] }
+                 '
+      echo "=== ${MESSAGE_PREFIX}End stack trace ==="
+    ) 1>&2
+    # Make sure Error exits the master process, even if called from child processes:
+    kill -USR1 $MASTER_PID
+}
+
+# If return code is non-zero, bail out:
+function StopIfError () {
+    if (( $? != 0 )) ; then
+        Error "$@"
+    fi
+}
+
 # Exit if there is a bug in ReaR:
 function BugError () {
-    local caller_source="$( CallerSource )"
+    { local caller_source="$( CallerSource )" ; } 2>>/dev/$DISPENSABLE_OUTPUT_DEV
     Error "
 ====================
 BUG in $caller_source:
@@ -423,7 +477,7 @@ BUG in $caller_source:
 --------------------
 Please report this issue at https://github.com/rear/rear/issues
 and include the relevant parts from $RUNTIME_LOGFILE
-preferably with full debug information via 'rear -d -D $WORKFLOW'
+preferably with full debug information via 'rear -D $WORKFLOW'
 ===================="
 }
 

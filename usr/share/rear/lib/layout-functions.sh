@@ -166,7 +166,7 @@ generate_layout_dependencies() {
                     if [ "${mp#$temp_dep_mp}" != "${mp}" ] && [ "$mp" != "$dep_mp" ]; then
                         add_dependency "$type:$mp" "$dep_type:$dep_mp"
                     fi
-                done < <(awk '$1 ~ /^fs|btrfsmountedsubvol$/ { print; }' $LAYOUT_FILE)
+                done < <( egrep '^fs |^btrfsmountedsubvol ' $LAYOUT_FILE )
                 ;;
             swap)
                 dev=$(echo "$remainder" | cut -d " " -f "1")
@@ -365,7 +365,9 @@ get_partition_start() {
     local disk_name=$1
     local start_block start
 
-    local block_size=$(get_block_size ${disk_name%/*})
+    # When reading /sys/block/.../start or "dmsetup table", output is always in
+    # 512 bytes blocks
+    local block_size=512
 
     if [[ -r /sys/block/$disk_name/start ]] ; then
         start_block=$(< $path/start)
@@ -476,6 +478,9 @@ get_sysfs_name() {
 ###     /dev/dm-3 -> /dev/mapper/system-tmp
 ###     /dev/dm-4 -> /dev/mapper/oralun
 ###     /dev/dm-5 -> /dev/mapper/oralunp1
+###     /dev/sda -> /dev/sda
+###
+### Returns 0 on success, 1 if device is not existing
 get_device_name() {
     ### strip common prefixes
     local name=${1#/dev/}
@@ -483,40 +488,31 @@ get_device_name() {
 
     contains_visible_char "$name" || BugError "Empty string passed to get_device_name"
 
-    ### Translate dm-8 -> mapper/test
-    local device dev_number mapper_number
-    if [[ -d /sys/block/$name ]] ; then
-        if [[ -r /sys/block/$name/dm/name ]] ; then
-            ### recent kernels have a dm subfolder
-            echo "/dev/mapper/$( < /sys/block/$name/dm/name)";
-            return 0
-        else
-            ### loop over all block devices
-            dev_number=$( < /sys/block/$name/dev)
-            for device in /dev/mapper/* ; do
-                mapper_number=$(dmsetup info -c --noheadings -o major,minor ${device#/dev/mapper/} 2>/dev/null )
-                if [ "$dev_number" = "$mapper_number" ] ; then
-                    echo "$device"
-                    return 0
-                fi
-            done
-        fi
-    fi
-
-    ### Translate device name to mapper name. ex: vg/lv -> mapper/vg-lv
     if [[ "$name" =~ ^mapper/ ]]; then
         echo "/dev/$name"
         return 0
     fi
-    if my_dm=`readlink /dev/$name`; then
-       for mapper_dev in /dev/mapper/*; do
-           if mapper_dm=`readlink $mapper_dev`; then
-              if [ "$my_dm" = "$mapper_dm" ]; then
-                 echo $mapper_dev
-                 return 0
-              fi
-           fi
-       done
+
+    if [[ -L "/dev/$name" ]] ; then
+        # Map vg/lv into dm-X, which will then be resolved later
+        name="$( basename $(readlink -f /dev/$name) )"
+    fi
+
+    if [[ "$name" =~ ^dm- ]] ; then
+        local device
+        if [[ -r /sys/block/$name/dm/name ]] ; then
+            ### recent kernels have a dm subfolder
+            device="$( < /sys/block/$name/dm/name )"
+        else
+            local dev_number=$( < /sys/block/$name/dev)
+            if [[ ! -r "$TMP_DIR/dmsetup_info.txt" ]] ; then
+                dmsetup info --noheadings -c -o name,major,minor > "$TMP_DIR/dmsetup_info.txt"
+            fi
+            device="$( awk -F ':' "/$dev_number\$/ { print \$1 }" < "$TMP_DIR/dmsetup_info.txt" )"
+            [[ -n "$device" ]] || BugError "No device returned for major/minor $dev_number"
+        fi
+        echo "/dev/mapper/$device"
+        return 0
     fi
 
     ### handle cciss sysfs naming
@@ -524,6 +520,7 @@ get_device_name() {
 
     ### just return the possibly nonexisting name
     echo "/dev/$name"
+    [[ -r "/dev/$name" ]] && return 0
     return 1
 }
 
@@ -548,11 +545,32 @@ get_device_mapping() {
 }
 
 # Get the size in bytes of a disk/partition.
+# For disks, use "sda" as argument.
 # For partitions, use "sda/sda1" as argument.
 get_disk_size() {
     local disk_name=$1
+    # When a partition is specified (e.g. sda/sda1)
+    # then it has to read /sys/block/sda/sda1/size in the old code below.
+    # In contrast the get_block_size() function below is different
+    # because it is non-sense asking for block size of a partition,
+    # so that the get_block_size() function below is stripping everything
+    # in front of the blockdev basename (e.g. /some/path/sda -> sda)
+    # cf. https://github.com/rear/rear/pull/1885#discussion_r207900308
 
-    local block_size=$(get_block_size ${disk_name%/*})
+    # Preferably use blockdev, see https://github.com/rear/rear/issues/1884
+    if has_binary blockdev; then
+        # ${disk_name##*/} translates 'sda/sda1' into 'sda1' and 'sda' into 'sda'
+        blockdev --getsize64 /dev/${disk_name##*/} && return
+        # If blockdev fails do not error out but fall through to the old code below
+        # because blockdev fails e.g. for a CDROM device when no DVD or ISO is attached to
+        # cf. https://github.com/rear/rear/pull/1885#issuecomment-410676283
+        # and https://github.com/rear/rear/pull/1885#issuecomment-410697398
+    fi
+
+    # Linux always considers sectors to be 512 bytes long. See the note in the
+    # kernel source, specifically, include/linux/types.h regarding the sector_t
+    # type for details.
+    local block_size=512
 
     retry_command test -r /sys/block/$disk_name/size || Error "Could not determine size of disk $disk_name"
 
@@ -565,9 +583,20 @@ get_disk_size() {
 
 # Get the block size of a disk.
 get_block_size() {
+    local disk_name="${1##*/}" # /some/path/sda -> sda
+
+    # Preferably use blockdev, see https://github.com/rear/rear/issues/1884
+    if has_binary blockdev; then
+        blockdev --getss /dev/$disk_name && return
+        # If blockdev fails do not error out but fall through to the old code below
+        # because blockdev fails e.g. for a CDROM device when no DVD or ISO is attached to
+        # cf. https://github.com/rear/rear/pull/1885#issuecomment-410676283
+        # and https://github.com/rear/rear/pull/1885#issuecomment-410697398
+    fi
+
     # Only newer kernels have an interface to get the block size
-    if [ -r /sys/block/$1/queue/logical_block_size ] ; then
-        echo $( < /sys/block/$1/queue/logical_block_size)
+    if [ -r /sys/block/$disk_name/queue/logical_block_size ] ; then
+        echo $( < /sys/block/$disk_name/queue/logical_block_size)
     else
         echo "512"
     fi
@@ -603,11 +632,13 @@ blkid_label_of_device() {
 # Returns 0 otherwise or if the device doesn't exists
 is_disk_a_pv() {
     disk=$1
-    if grep -q "^lvmdev .* ${disk} " $LAYOUT_FILE ; then
-        return 0
-    else
-        return 1
-    fi
+
+    # Using awk, select the 'lvmdev' line for which $disk is the device (column 3),
+    # cf. https://github.com/rear/rear/pull/1897
+    # If exit == 1, then there is such line (so $disk is a PV),
+    # otherwise exit with default value '0', which falls through to 'return 0' below.
+    awk "\$1 == \"lvmdev\" && \$3 == \"${disk}\" { exit 1 }" "$LAYOUT_FILE" >/dev/null || return 1
+    return 0
 }
 
 function is_multipath_path {
@@ -784,26 +815,61 @@ function get_part_device_name_format() {
 
     echo "$part_name"
 }
-#
-# apply_layout_mappings function migrate disk device reference from an old system and
-# replace them with new one (from current system).
-# the relationship between OLD and NEW device is provided by $MAPPING_FILE
-# (usually disk_mappings file in $VAR_DIR).
+
+# The is_completely_identical_layout_mapping function checks
+# if there is a completely identical mapping in the mapping file
+# (usually $MAPPING_FILE is /var/lib/rear/layout/disk_mappings)
+# which is used to avoid that files (in particular restored files)
+# may get needlessly touched and modified for identical mappings
+# see https://github.com/rear/rear/issues/1847
+function is_completely_identical_layout_mapping() {
+    # MAPPING_FILE is set in layout/prepare/default/300_map_disks.sh
+    # only if MIGRATION_MODE is true.
+    # When $MAPPING_FILE is empty the below command
+    #   grep -v '^#' "$MAPPING_FILE"
+    # would hang up endlessly without user notification
+    # because that command would become
+    #   grep -v '^#'
+    # which reads from stdin (i.e. from the user's keyboard).
+    # A non-existent mapping file is considered to be a completely identical mapping
+    # (i.e. 'no mapping' means 'do not change anything' which is the identity map).
+    test -f "$MAPPING_FILE" || return 0
+    # Only non-commented and syntactically valid lines in the mapping file count
+    # so that also an empty mapping file or when there is not at least one valid mapping
+    # are considered to be completely identical mappings
+    # (i.e. 'no valid mapping' means 'do not change anything' which is the identity map):
+    while read source target junk ; do
+        # Skip lines that have wrong syntax:
+        test "$source" -a "$target" || continue
+        test "$source" != "$target" && return 1
+    done < <( grep -v '^#' "$MAPPING_FILE" )
+    Log "Completely identical layout mapping in $MAPPING_FILE"
+    return 0
+}
+
+# apply_layout_mappings function migrate disk device references
+# from an old system and replace them with new ones (from current system).
+# The relationship between OLD and NEW device is provided by the mapping file
+# (usually $MAPPING_FILE is /var/lib/rear/layout/disk_mappings).
 function apply_layout_mappings() {
-    # --Begining Of TEST section--
+    local file_to_migrate="$1"
+
     # Exit if MIGRATION_MODE is not true.
     is_true "$MIGRATION_MODE" || return 0
-
-    local file_to_migrate="$1"
 
     # apply_layout_mappings needs one argument:
     test "$file_to_migrate" || BugError "apply_layout_mappings function called without argument (file_to_migrate)."
 
     # Only apply layout mapping on non-empty file:
     test -s "$file_to_migrate" || return 0
-    # --End Of TEST section--
 
-    # Generate unique words (where unique means that those generated words cannot exist in file_to_migrate)
+    # Do not apply layout mappings when there is a completely identical mapping in the mapping file.
+    # This test is run for each call of the apply_layout_mappings function because
+    # in MIGRATION_MODE there are several user dialogs during "rear recover" where
+    # the user can run the ReaR shell and edit the mapping file as he likes:
+    is_completely_identical_layout_mapping && return 0
+
+    # Generate unique words (where unique means that those generated words cannot already exist in file_to_migrate)
     # as replacement placeholders to correctly handle circular replacements e.g. for "sda -> sdb and sdb -> sda"
     # in the mapping file those generated unique words would be _REAR0_ for sda and _REAR1_ for sdb.
     # The replacement strategy is:
@@ -819,7 +885,7 @@ function apply_layout_mappings() {
     # so that the circular replacement "sda -> sdb and sdb -> sda" is done in file_to_migrate.
     # Step 3:
     # In file_to_migrate verify that there are none of those temporary replacement words from step 1 left
-    # to ensure the replacement was done correctly and complete.
+    # to ensure the replacement was done correctly and completely.
 
     # Replacement_file initialization.
     replacement_file="$TMP_DIR/replacement_file"
@@ -827,8 +893,8 @@ function apply_layout_mappings() {
 
     function add_replacement() {
         # We temporarily map all devices in the mapping to new names _REAR[0-9]+_
-        echo "$1 _REAR${replaced_count}_" >> "$replacement_file"
-        let replaced_count++
+        echo "$1 _REAR${replacement_count}_" >> "$replacement_file"
+        let replacement_count++
     }
 
     function has_replacement() {
@@ -852,7 +918,7 @@ function apply_layout_mappings() {
     #   /dev/sdb _REAR1_
     #   /dev/sdd _REAR2_
     #   /dev/sdc _REAR3_
-    replaced_count=0
+    replacement_count=0
     while read source target junk ; do
         # Skip lines that have wrong syntax:
         test "$source" -a "$target" || continue
@@ -911,7 +977,7 @@ function apply_layout_mappings() {
 
     # Step 3:
     # Verify that there are none of those temporary replacement words from step 1 left in file_to_migrate
-    # to ensure the replacement was done correctly and complete (cf. the above example where '_REAR3_' is left).
+    # to ensure the replacement was done correctly and completely (cf. the above example where '_REAR3_' is left).
     apply_layout_mappings_succeeded="yes"
     while read original replacement junk ; do
         # Skip lines that have wrong syntax:

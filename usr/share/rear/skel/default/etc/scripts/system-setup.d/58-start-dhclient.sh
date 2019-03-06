@@ -23,16 +23,16 @@ sleep 5
 source /etc/scripts/dhcp-setup-functions.sh
 
 # Need to find the devices and their HWADDR (avoid local and virtual devices)
-for dev in `get_device_by_hwaddr` ; do
-        case $dev in
+for DEVICE in `get_device_by_hwaddr` ; do
+        case $DEVICE in
 		(lo|pan*|sit*|tun*|tap*|vboxnet*|vmnet*|virt*|vif*) continue ;; # skip all kind of internal devices
         esac
-        HWADDR=`get_hwaddr $dev`
+        HWADDR=`get_hwaddr $DEVICE`
 
 	if [ -n "$HWADDR" ]; then
 		HWADDR=$(echo $HWADDR | awk '{ print toupper($0) }')
+	    DEVICE=$(get_device_by_hwaddr $HWADDR)
 	fi
-	[ -z "$DEVICE" -a -n "$HWADDR" ] && DEVICE=$(get_device_by_hwaddr $HWADDR)
 	[ -z "$DEVICETYPE" ] && DEVICETYPE=$(echo ${DEVICE} | sed "s/[0-9]*$//")
 	[ -z "$REALDEVICE" -a -n "$PARENTDEVICE" ] && REALDEVICE=$PARENTDEVICE
 	[ -z "$REALDEVICE" ] && REALDEVICE=${DEVICE%%:*}
@@ -45,7 +45,7 @@ for dev in `get_device_by_hwaddr` ; do
 	# IPv4 DHCP clients
 	case $DHCLIENT_BIN in
 		(dhclient)
-			dhclient -lf /var/lib/dhclient/dhclient.leases.${DEVICE} -pf /var/run/dhclient.pid -cf /etc/dhclient.conf ${DEVICE}
+			dhclient -lf /var/lib/dhclient/dhclient.leases.${DEVICE} -pf /var/run/dhclient.${DEVICE}.pid -cf /etc/dhclient.conf ${DEVICE}
 		;;
 		(dhcpcd)
 			dhcpcd ${DEVICE}
@@ -55,7 +55,7 @@ for dev in `get_device_by_hwaddr` ; do
 	# IPv6 DHCP clients
 	case $DHCLIENT6_BIN in
 		(dhclient6)
-			dhclient6 -lf /var/lib/dhclient/dhclient.leases.${DEVICE} -pf /var/run/dhclient.pid -cf /etc/dhclient.conf ${DEVICE}
+			dhclient6 -lf /var/lib/dhclient/dhclient.leases.${DEVICE} -pf /var/run/dhclient.${DEVICE}.pid -cf /etc/dhclient.conf ${DEVICE}
 		;;
 		(dhcp6c)
 			dhcp6c  ${DEVICE}

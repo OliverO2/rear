@@ -1,12 +1,12 @@
 # Save the partition layout
-### This works on a per device basis.
-### The main function is extract_partitions
-### Temporary caching of data in $TMP_DIR/partitions
-### Temporary caching of parted data in $TMP_DIR/parted
+# This works on a per device basis.
+# The main function is extract_partitions
+# Temporary caching of data in $TMP_DIR/partitions
+# Temporary caching of parted data in $TMP_DIR/parted
 
-### Parted can output machine parseable information
+# Parted can output machine parseable information
 FEATURE_PARTED_MACHINEREADABLE=
-### Parted used to have slightly different naming
+# Parted used to have slightly different naming
 FEATURE_PARTED_OLDNAMING=
 
 parted_version=$( get_version parted -v )
@@ -268,7 +268,12 @@ extract_partitions() {
             # where the size is 524288000B i.e. parted_extended_partition_line[3]
             parted_extended_partition_line=( $( parted -s $device unit B print | grep -w "$partition_nr" | grep -w 'extended' ) )
             parted_extended_partition_size="${parted_extended_partition_line[3]%%B*}"
-            if test $size -ne $parted_extended_partition_size ; then
+            # parted_extended_partition_size is empty (or perhaps whatever string that is not an integer number)
+            # when it is no extended partition (i.e. when it is a primary partition or a logical partition)
+            # so that the subsequent 'test' intentionally also fails when parted_extended_partition_size is not an integer
+            # with bash stderr messages like 'unary operator expected' or 'integer expression expected'
+            # that are suppressed here to not appear in the log, cf. https://github.com/rear/rear/issues/1931
+            if test $size -ne $parted_extended_partition_size 2>/dev/null ; then
                  Log "Replacing probably wrong extended partition size $size by what parted reports $parted_extended_partition_size"
                  sed -i /^$partition_nr\ /s/\ $size\ /\ $parted_extended_partition_size\ / $TMP_DIR/partitions
             fi
@@ -319,5 +324,12 @@ Log "Saving disk partitions."
             fi
         fi
     done
-
 ) >> $DISKLAYOUT_FILE
+
+# parted and partprobe are required in the recovery system if disklayout.conf contains at least one 'disk' or 'part' entry
+# see the create_disk and create_partitions functions in layout/prepare/GNU/Linux/100_include_partition_code.sh
+# what program calls are written to diskrestore.sh and which programs will be run during "rear recover" in any case
+# e.g. mdadm is not called in any case and sfdisk is only used in case of BLOCKCLONE_STRICT_PARTITIONING
+# cf. https://github.com/rear/rear/issues/1963
+egrep -q '^disk |^part ' $DISKLAYOUT_FILE && REQUIRED_PROGS=( "${REQUIRED_PROGS[@]}" parted partprobe ) || true
+

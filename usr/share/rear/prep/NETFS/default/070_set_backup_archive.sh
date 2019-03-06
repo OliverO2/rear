@@ -3,6 +3,15 @@
 
 # FIXME: backuparchive is no local variable (regardless that it is lowercased)
 
+# To avoid logging of 'Using backup archive' on the screen and in the log file
+# during a mkrescue run we skip what this script does for the mkrescue workflow
+# see https://github.com/rear/rear/issues/1363
+# There is a relation to output/ISO/Linux-i386/810_prepare_multiple_iso.sh
+# that normally needs the backuparchive variable value
+# except for the mkrescue workflow so that this here is safe
+# see https://github.com/rear/rear/pull/2063#issuecomment-469222487
+[[ "$WORKFLOW" = "mkrescue" ]] && return
+
 # If TAPE_DEVICE is specified, use that:
 if test "$TAPE_DEVICE" ; then
     backuparchive="$TAPE_DEVICE"

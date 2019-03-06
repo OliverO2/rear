@@ -1,16 +1,47 @@
 #
 # This script is an improvement over a blind "grub-install (hd0)".
 #
+##############################################################################
+# This script is based on finalize/Linux-i386/620_install_grub2.sh
+# but this script contains PPC64/PPC64LE specific code.
+##############################################################################
+#
+# The generic way how to install GRUB2 when one is not "inside" the system
+# but "outside" like in the ReaR recovery system or in a rescue system is
+# to install GRUB2 from within the target system environment via 'chroot'
+# basically via commands like the following:
+#
+#   mount --bind /proc /mnt/local/proc
+#   mount --bind /sys /mnt/local/sys
+#   mount --bind /dev /mnt/local/dev
+#   chroot /mnt/local /usr/sbin/grub2-mkconfig -o /boot/grub2/grub.cfg
+#   chroot /mnt/local /usr/sbin/grub2-install /dev/sda
+#
+# Using 'grub2-install --root-directory' instead of 'chroot' is not a good idea,
+# see https://github.com/rear/rear/issues/1828#issuecomment-398717889
+#
+# The procedure is the same when GRUB2 is used on POWER architecture
+# e.g. on PPC64 or PPC64LE but there the GRUB2 install device
+# has to be a PPC PReP boot partition.
+# On POWER architecture the Open Firmware is configured
+# to read the ELF image embedded in the PReP boot partition
+# (like how the MBR is used by PC x86 BIOS to embed boot code).
+#
 # However the following issues still exist:
 #
-# * We don't know what the first disk will be, so we cannot be sure the MBR
-#   is written to the correct disk. That's why we make all disks bootable
-#   as fallback unless GRUB2_INSTALL_DEVICES was specified. This is also the
-#   reason why more than one disk can be specified in GRUB2_INSTALL_DEVICES.
+# * We do not know what the first boot device will be, so we cannot be sure
+#   GRUB2 is installed on the correct boot device.
+#   If software RAID1 is used, several boot devices will be found and
+#   then GRUB2 needs to be installed on each of them because
+#   "You don't want to lose the first disk and suddenly discover your system won't reboot!"
+#   cf. https://raid.wiki.kernel.org/index.php/Setting_up_a_(new)_system
+#   This is the reason why we make all possible boot disks bootable
+#   as fallback unless GRUB2_INSTALL_DEVICES was specified.
+#   This is also the reason why more than one disk can be specified
+#   in GRUB2_INSTALL_DEVICES.
 #
-# * There is no guarantee that GRUB2 was the boot loader used originally.
-#   One solution is to save and restore the MBR for each disk, but this
-#   does not guarantee a correct boot-order, or even a working bootloader config.
+# * There is no guarantee that GRUB2 was used as bootloader on the original system.
+#   The solution is to specify the BOOTLOADER config variable.
 #
 # This script does not error out because at this late state of "rear recover"
 # (i.e. after the backup was restored) I <jsmeix@suse.de> consider it too hard
@@ -25,7 +56,15 @@
 is_true $NOBOOTLOADER || return 0
 
 # For UEFI systems with grub2 we should use efibootmgr instead,
-# cf. finalize/Linux-i386/630_run_efibootmgr.sh
+# cf. finalize/Linux-i386/670_run_efibootmgr.sh
+# Perhaps this does not apply on PPC64/PPC64LE because
+# probably there is no UEFI on usual PPC64/PPC64LE systems
+# but https://github.com/andreiw/ppc64le-edk2 reads (excerpts):
+#   "TianoCore on PowerPC 64 Little-Endian (OPAL/PowerNV)
+#    This is 'UEFI' on top of OPAL firmware"
+# so that there could be UEFI via OPAL firmware on PPC64LE systems
+# which is the reason to keep this test here also for PPC64/PPC64LE
+# (if UEFI is not used the test condition will not become true):
 is_true $USING_UEFI_BOOTLOADER && return
 
 # Only for GRUB2 - GRUB Legacy will be handled by its own script.
@@ -33,7 +72,7 @@ is_true $USING_UEFI_BOOTLOADER && return
 # If neither grub-probe nor grub2-probe is there assume GRUB2 is not there:
 type -p grub-probe || type -p grub2-probe || return 0
 
-LogPrint "Installing GRUB2 boot loader..."
+LogPrint "Installing GRUB2 boot loader on PPC64/PPC64LE..."
 
 # Check if we find GRUB2 where we expect it (GRUB2 can be in boot/grub or boot/grub2):
 grub_name="grub2"
@@ -62,6 +101,14 @@ if ! chroot $TARGET_FS_ROOT /bin/bash --login -c "$grub_name-mkconfig -o /boot/$
     LogPrintError "Failed to generate boot/$grub_name/grub.cfg in $TARGET_FS_ROOT - trying to install GRUB2 nevertheless"
 fi
 
+# Do not update nvram when system is running in PowerNV mode (BareMetal).
+# grub2-install will fail if not run with the --no-nvram option on a PowerNV system,
+# see https://github.com/rear/rear/pull/1742
+grub2_install_option=""
+if [[ $(awk '/platform/ {print $NF}' < /proc/cpuinfo) == PowerNV ]] ; then
+    grub2_install_option="--no-nvram"
+fi
+
 # When GRUB2_INSTALL_DEVICES is specified by the user
 # install GRUB2 only there and nowhere else:
 if test "$GRUB2_INSTALL_DEVICES" ; then
@@ -87,7 +134,7 @@ if test "$GRUB2_INSTALL_DEVICES" ; then
         else
             LogPrint "Installing GRUB2 on $grub2_install_device (specified in GRUB2_INSTALL_DEVICES)"
         fi
-        if ! chroot $TARGET_FS_ROOT /bin/bash --login -c "$grub_name-install $grub2_install_device" ; then
+        if ! chroot $TARGET_FS_ROOT /bin/bash --login -c "$grub_name-install $grub2_install_option $grub2_install_device" ; then
             LogPrintError "Failed to install GRUB2 on $grub2_install_device"
             grub2_install_failed="yes"
         fi
@@ -99,62 +146,39 @@ if test "$GRUB2_INSTALL_DEVICES" ; then
 fi
 
 # If GRUB2_INSTALL_DEVICES is not specified try to automatically determine where to install GRUB2:
-if ! test -r "$LAYOUT_FILE" -a -r "$LAYOUT_DEPS" ; then
+if ! test -r "$LAYOUT_FILE" ; then
     LogPrintError "Cannot determine where to install GRUB2"
     return 1
 fi
 LogPrint "Determining where to install GRUB2 (no GRUB2_INSTALL_DEVICES specified)"
 
-# Find exclusive partition(s) belonging to /boot or / (if /boot is inside root filesystem):
-if test "$( filesystem_name $TARGET_FS_ROOT/boot )" = "$TARGET_FS_ROOT" ; then
-    bootparts=$( find_partition fs:/ )
-else
-    bootparts=$( find_partition fs:/boot )
-fi
-if ! test "$bootparts" ; then
-    LogPrintError "Cannot install GRUB2 (unable to find a /boot or / partition)"
+# Find PPC PReP Boot partitions:
+part_list=$( awk -F ' ' '/^part / {if ($6 ~ /prep/) {print $7}}' $LAYOUT_FILE )
+if ! test "$part_list" ; then
+    LogPrintError "Cannot install GRUB2 (unable to find a PPC PReP boot partition)"
     return 1
 fi
 
-# Find the disks that need a new GRUB2 MBR:
-disks=$( grep '^disk \|^multipath ' $LAYOUT_FILE | cut -d' ' -f2 )
-if ! test "$disks" ; then
-    LogPrintError "Cannot install GRUB2 (unable to find a disk)"
-    return 1
-fi
-
-for disk in $disks ; do
-    # Installing GRUB2 on an LVM PV will wipe the metadata so we skip those:
-    is_disk_a_pv "$disk" && continue
-
-    # Use first boot partition by default:
-    part=$( echo $bootparts | cut -d' ' -f1 )
-
-    # Use boot partition that matches this disk, if any:
-    for bootpart in $bootparts ; do
-        bootdisk=$( find_disk_and_multipath "$bootpart" )
-        if test "$disk" = "$bootdisk" ; then
-            part=$bootpart
-            break
-        fi
-    done
-
-    # Find boot disk and partition number:
-    bootdisk=$( find_disk_and_multipath "$part" )
-
-    # Install GRUB2 on the boot disk if one was found:
-    if test "$bootdisk" ; then
-        LogPrint "Found possible boot disk $bootdisk - installing GRUB2 there"
-        if chroot $TARGET_FS_ROOT /bin/bash --login -c "$grub_name-install $bootdisk" ; then
+# We do not know what the first boot device will be, so we cannot be sure
+# GRUB2 is installed on the correct boot device.
+# If software RAID1 is used, several boot devices will be found and
+# then GRUB2 needs to be installed on each of them.
+# This is the reason why we make all possible boot disks bootable here:
+for part in $part_list ; do
+    # Install GRUB2 on the PPC PReP boot partition if one was found:
+    if test "$part" ; then
+        LogPrint "Found PPC PReP boot partition $part - installing GRUB2 there"
+        # Erase the first 512 bytes of the PPC PReP boot partition:
+        dd if=/dev/zero of=$part
+        if chroot $TARGET_FS_ROOT /bin/bash --login -c "$grub_name-install $grub2_install_option $part" ; then
             # In contrast to the above behaviour when GRUB2_INSTALL_DEVICES is specified
             # consider it here as a successful bootloader installation when GRUB2
-            # got installed on at least one boot disk:
+            # got installed on at least one PPC PReP boot partition:
             NOBOOTLOADER=''
-            # We don't know what the first disk will be, so we cannot be sure the MBR
-            # is written to the correct disk. That's why we make all disks bootable:
+            # Continue with the next PPC PReP boot partition:
             continue
         fi
-        LogPrintError "Failed to install GRUB2 on possible boot disk $bootdisk"
+        LogPrintError "Failed to install GRUB2 on PPC PReP boot partition $part"
     fi
 done
 

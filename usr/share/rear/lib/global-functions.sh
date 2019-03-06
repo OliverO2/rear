@@ -14,6 +14,16 @@ function read_and_strip_file () {
     sed -e '/^[[:space:]]/d;/^$/d;/^#/d' "$filename"
 }
 
+# Three functions to test
+#   if the argument is an integer
+#   if the argument is a positive integer (i.e. test for '> 0')
+#   if the argument is a nonnegative integer (i.e. test for '>= 0')
+# where the argument is limted by the bash integer arithmetic range limitation
+# from - ( 2^63 ) = -9223372036854775808 to 9223372036854775807 = + ( 2^63 - 1 )
+# e.g. "is_nonnegative_integer 9223372036854775807" works (tested down to SLES11 on 32-bit x86)
+# but "is_nonnegative_integer 9223372036854775808" is out of range and returns a wrong result, cf.
+# https://github.com/rear/rear/issues/1269#issuecomment-290006467
+
 # Test if the (first) argument is an integer.
 # If yes output the argument value and return 0
 # otherwise output '0' and return 1:
@@ -39,6 +49,23 @@ function is_positive_integer () {
     if test "$argument" -gt 0 2>/dev/null ; then
         # The arithmetic expansion removes a possible leading '+' in the output
         # so that e.g. "is_positive_integer +12" outputs '12' (and not '+12'):
+        echo $(( argument + 0 ))
+        return 0
+    fi
+    echo 0
+    return 1
+}
+
+# Test if the (first) argument is a nonnegative integer (i.e. test for '>= 0')
+# If yes output the argument value and return 0
+# otherwise output '0' and return 1
+# (in particular "is_nonnegative_integer -00" outputs '0' and returns 0):
+function is_nonnegative_integer () {
+    local argument="$1"
+    if test "$argument" -ge 0 2>/dev/null ; then
+        # The arithmetic expansion removes a possible leading '+' in the output
+        # so that e.g. "is_nonnegative_integer +12" outputs '12' (and not '+12')
+        # and "is_nonnegative_integer -0" outputs '0' (and not '-0'):
         echo $(( argument + 0 ))
         return 0
     fi
@@ -146,7 +173,7 @@ function percent_encode() {
     # and running that with 'set -x' shows the UTF-8 encoded bytes cause it:
     #   + char=$'\303\244'
     #   + case $char in
-    #   + printf %%%02X ''\''Ã#'
+    #   + printf %%%02X ''\''A#'
     #   %FFFFFFFFFFFFFFC3+
     # because the '\303\244' UTF-8 bytes should get encoded byte by byte
     # but not as two bytes at the same time so that the problem is
@@ -374,11 +401,107 @@ mount_url() {
             return 0
             ;;
         (iso)
-            if [[ "$WORKFLOW" = "recover" ]]; then
-                mount_cmd="mount /dev/disk/by-label/${ISO_VOLID} $mountpoint"
-            else
-                return 0
+            # Check that there is a symbolic link /dev/disk/by-label/RELAXRECOVER
+            # that points to a block device that uses the filesystem label RELAXRECOVER.
+            # RELAXRECOVER is the default value of the ISO_VOLID config variable.
+            # If no such symbolic link exists create one because it is needed
+            # during "rear recover" when the ISO image contains the backup,
+            # see https://github.com/rear/rear/issues/1893
+            # and https://github.com/rear/rear/issues/1891
+            # and https://github.com/rear/rear/issues/326
+            # so that there is nothing to do here unless during "rear recover":
+            test "recover" = "$WORKFLOW" || return 0
+            # Try to find a block device that uses the filesystem label ISO_VOLID.
+            # Usually "blkid -L RELAXRECOVER" results '/dev/sr0' or '/dev/sr1'
+            # cf. https://github.com/rear/rear/issues/1893#issuecomment-411034001
+            # but "blkid -L" is not supported on SLES10 (blkid is too old there)
+            # so that the traditional form "blkid -l -o device -t LABEL=RELAXRECOVER"
+            # is used which also works and is described in "man blkid" on SLES15:
+            local relaxrecover_block_device="$( blkid -l -o device -t LABEL="$ISO_VOLID" )"
+            # Try to get where the symbolic link /dev/disk/by-label/ISO_VOLID points to.
+            # "readlink -e symlink" outputs nothing when the symlink or its target does not exist:
+            local relaxrecover_symlink_name="/dev/disk/by-label/$ISO_VOLID"
+            local relaxrecover_symlink_target="$( readlink $verbose -e "$relaxrecover_symlink_name" )"
+            # Everything is o.k. when relaxrecover_block_device and relaxrecover_symlink_target are non-empty
+            # and when the relaxrecover_symlink_target value is the relaxrecover_block_device value.
+            # Usually the right symbolic link /dev/disk/by-label/ISO_VOLID is set up automatically by udev.
+            if ! test "$relaxrecover_block_device" -a "$relaxrecover_symlink_target" -a "$relaxrecover_symlink_target" = "$relaxrecover_block_device" ; then
+                # If not everything is o.k. first try fix things automatically:
+                Log "Symlink '$relaxrecover_symlink_name' does not exist or does not point to a block device with '$ISO_VOLID' filesystem label"
+                # One of the things that could be not o.k. is that there is no /dev/disk/by-label/ directory.
+                # Usually udev would automatically create it but sometimes that does not work,
+                # cf. https://github.com/rear/rear/issues/1891#issuecomment-411027324
+                # so that we create a /dev/disk/by-label/ directory if it is not there:
+                mkdir $verbose -p /dev/disk/by-label
+                # Try to let the symbolic link point to the block device that uses the filesystem label ISO_VOLID:
+                if test -b "$relaxrecover_block_device" ; then
+                    Log "Making symlink '$relaxrecover_symlink_name' point to '$relaxrecover_block_device' because it has filesystem label '$ISO_VOLID'"
+                    # Below there is a test that /dev/disk/by-label/ISO_VOLID exists which should detect when this 'ln' command failed:
+                    ln $verbose -sf "$relaxrecover_block_device" "$relaxrecover_symlink_name"
+                else
+                    # We found no block device that uses the filesystem label ISO_VOLID:
+                    Log "No block device with ISO filesystem label '$ISO_VOLID' found (by the blkid command)"
+                    # At this point things look not good so that now we need to tell the user about what is wrong:
+                    LogPrintError "A symlink '$relaxrecover_symlink_name' is required that points to the device with the ReaR ISO image"
+                    rear_workflow="rear $WORKFLOW"
+                    rear_shell_history="$( echo -e "ln -vsf /dev/cdrom $relaxrecover_symlink_name\nls -l $relaxrecover_symlink_name" )"
+                    unset choices
+                    choices[0]="/dev/cdrom is where the ISO is attached to"
+                    choices[1]="/dev/sr0 is where the ISO is attached to"
+                    choices[2]="/dev/sr1 is where the ISO is attached to"
+                    choices[3]="Use Relax-and-Recover shell and return back to here"
+                    choices[4]="Continue '$rear_workflow'"
+                    choices[5]="Abort '$rear_workflow'"
+                    prompt="Create symlink '$relaxrecover_symlink_name' that points to the ReaR ISO image device"
+                    choice=""
+                    wilful_input=""
+                    symlink_target=""
+                    # When USER_INPUT_RELAXRECOVER_SYMLINK_TARGET has any 'true' value be liberal in what you accept and
+                    # assume choices[0] 'Let /dev/disk/by-label/RELAXRECOVER point to /dev/cdrom' was actually meant:
+                    is_true "$USER_INPUT_RELAXRECOVER_SYMLINK_TARGET" && USER_INPUT_RELAXRECOVER_SYMLINK_TARGET="${choices[0]}"
+                    while true ; do
+                        choice="$( UserInput -I RELAXRECOVER_SYMLINK_TARGET -p "$prompt" -D "${choices[0]}" "${choices[@]}" )" && wilful_input="yes" || wilful_input="no"
+                        case "$choice" in
+                            (${choices[0]})
+                                symlink_target="/dev/cdrom"
+                                is_true "$wilful_input" && LogPrint "User confirmed symlink target $symlink_target" || LogPrint "Using symlink target $symlink_target by default"
+                                # Below there is a test that /dev/disk/by-label/ISO_VOLID exists which should detect when this 'ln' command failed:
+                                ln $verbose -sf $symlink_target "$relaxrecover_symlink_name"
+                                break
+                                ;;
+                            (${choices[1]})
+                                symlink_target="/dev/sr0"
+                                LogPrint "Using symlink target $symlink_target"
+                                # Below there is a test that /dev/disk/by-label/ISO_VOLID exists which should detect when this 'ln' command failed:
+                                ln $verbose -sf $symlink_target "$relaxrecover_symlink_name"
+                                break
+                                ;;
+                            (${choices[2]})
+                                symlink_target="/dev/sr1"
+                                LogPrint "Using symlink target $symlink_target"
+                                # Below there is a test that /dev/disk/by-label/ISO_VOLID exists which should detect when this 'ln' command failed:
+                                ln $verbose -sf $symlink_target "$relaxrecover_symlink_name"
+                                break
+                                ;;
+                            (${choices[3]})
+                                # rear_shell runs 'bash' with the original STDIN STDOUT and STDERR when 'rear' was launched by the user:
+                                rear_shell "" "$rear_shell_history"
+                                ;;
+                            (${choices[4]})
+                                LogPrint "User chose to continue '$rear_workflow'"
+                                break
+                                ;;
+                            (${choices[5]})
+                                abort_recreate
+                                Error "User chose to abort '$rear_workflow' in ${BASH_SOURCE[0]}"
+                                ;;
+                        esac
+                    done
+                fi
             fi
+            # Check if /dev/disk/by-label/$ISO_VOLID exists (as symbolic link or in any other form), if yes assume things are right:
+            test -e "$relaxrecover_symlink_name" || Error "Cannot mount ISO because there is no '$relaxrecover_symlink_name'"
+            mount_cmd="mount $relaxrecover_symlink_name $mountpoint"
             ;;
         (var)
             ### The mount command is given by variable in the url host
@@ -437,8 +560,7 @@ mount_url() {
 
     Log "Mounting with '$mount_cmd'"
     # eval is required when mount_cmd contains single quoted stuff (e.g. see the above mount_cmd for curlftpfs)
-    eval $mount_cmd >&2
-    StopIfError "Mount command '$mount_cmd' failed."
+    eval $mount_cmd || Error "Mount command '$mount_cmd' failed."
 
     AddExitTask "umount -f $v '$mountpoint' >&2"
     return 0
