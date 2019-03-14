@@ -1,3 +1,15 @@
+rear (2.4.infix2) stable; urgency=medium
+
+  * Details:
+    - OPALPBA: Clean up plymouth/unlock service startup (3dfd28a1)
+    - OPALPBA: Adapt workflow to recent changes (links in /etc/alternatives)
+      (8b01c709)
+    - OPALPBA: Adapt workflow to recent changes (USE_RESOLV_CONF) (8de7722b)
+    - Add 'net-tools' to Debian dependencies as required for 'route' command
+      (d91b75ec)
+
+ -- Oliver Okrongli <oliver.okrongli@infix.de>  Thu, 14 Mar 2019 16:11:18 +0100
+
 rear (2.4.infix1) stable; urgency=medium
 
   * Details:
