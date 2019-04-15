@@ -1,14 +1,17 @@
 
-# New implementation for btrfs subvolume handling.
+# New implementation for generic btrfs subvolume handling.
+# This is "new" compared to the old code in 136_include_btrfs_subvolumes_SLES_code.sh.
 
-# Enable this version only when explicitly configured to do so.
-[[ "$BTRFS_SETUP_IMPLEMENTATION" == "new" ]] || return 0
+# Btrfs filesystems with subvolumes need a special handling.
+# This script layout/prepare/GNU/Linux/135_include_btrfs_subvolumes_generic_code.sh
+# contains the function btrfs_subvolumes_setup_generic for generic btrfs subvolumes setup (e.g. for Ubuntu 18.04)
+# cf. https://github.com/rear/rear/pull/2079
+# The script layout/prepare/GNU/Linux/136_include_btrfs_subvolumes_SLES_code.sh
+# contains the function btrfs_subvolumes_setup_SLES for SLES 12 (and later) special btrfs subvolumes setup.
+# For a plain btrfs filesystem without subvolumes the btrfs_subvolumes_setup_generic function does nothing.
 
-# NOTE: This function intentionally overrides the identically named function 'btrfs_subvolumes_setup' from
-# '130_include_mount_subvolumes_code.sh'.
-
-btrfs_subvolumes_setup() {
-    # Invocation: btrfs_subvolumes_setup $device $top_level_mountpoint [...]
+btrfs_subvolumes_setup_generic() {
+    # Invocation: btrfs_subvolumes_setup_generic $device $top_level_mountpoint [...]
     #
     # This function
     # (1) assumes that code present so far in $LAYOUT_FILE has
@@ -24,10 +27,10 @@ btrfs_subvolumes_setup() {
     local top_level_mountpoint="$2"  # the btrfs file system's top-level subvolume mount point
 
     if test -z "$device" -o -z "$top_level_mountpoint"; then
-        StopIfError "btrfs_subvolumes_setup: missing required parameter: device='$device', top_level_mountpoint='$top_level_mountpoint'"
+        StopIfError "btrfs_subvolumes_setup_generic: missing required parameter: device='$device', top_level_mountpoint='$top_level_mountpoint'"
     fi
 
-    Log "Begin btrfs_subvolumes_setup( $* ) - new implementation"
+    Log "Begin btrfs_subvolumes_setup_generic( $* )"
 
     # Generate code to create all mounted non top-level subvolumes sorted
     # - in subvolume path order,
@@ -61,7 +64,8 @@ btrfs_subvolumes_setup() {
                 info_message="Setting default subvolume to $subvolume_path"
                 Log "$info_message"
                 echo "# $info_message"
-                echo "btrfs subvolume set-default '$target_subvolume_path'"
+                echo "subvolumeID=\$( btrfs subvolume list -a '$target_subvolume_path' | sed -e 's/<FS_TREE>\///' | grep ' $subvolume_path\$' | tr -s '[:blank:]' ' ' | cut -d ' ' -f 2 )"
+                echo "btrfs subvolume set-default \$subvolumeID '$target_subvolume_path'"
             fi
         fi
 
@@ -72,7 +76,7 @@ btrfs_subvolumes_setup() {
             echo "# $info_message"
             echo "chattr +C '$target_subvolume_path'"
         fi
-    done < <( grep "^btrfsmountedsubvol $device " "$LAYOUT_FILE" | LC_COLLATE=C sort -k 5 -u )  >> "$LAYOUT_CODE"
+    done < <( grep "^btrfsmountedsubvol $device " "$LAYOUT_FILE" | LC_COLLATE=C sort -k 5 -u ) >> "$LAYOUT_CODE"
 
     # Generate code to mount subvolumes, sorted in mount-point order (top-down):
     while read ignore_keyword ignore_device subvolume_mountpoint subvolume_mount_options subvolume_path ignore_rest; do
@@ -114,8 +118,9 @@ btrfs_subvolumes_setup() {
             fi
             echo "mount -t btrfs -o '$subvolume_mount_options,subvol=$subvolume_path' '$device' '$target_subvolume_mountpoint'"
         fi
-    done < <( grep "^btrfsmountedsubvol $device " "$LAYOUT_FILE" | LC_COLLATE=C sort -k 3 )  >> "$LAYOUT_CODE"
+    done < <( grep "^btrfsmountedsubvol $device " "$LAYOUT_FILE" | LC_COLLATE=C sort -k 3 ) >> "$LAYOUT_CODE"
 
-    Log "End btrfs_subvolumes_setup( $* ) - new implementation"
+    Log "End btrfs_subvolumes_setup_generic( $* )"
     true
 }
+

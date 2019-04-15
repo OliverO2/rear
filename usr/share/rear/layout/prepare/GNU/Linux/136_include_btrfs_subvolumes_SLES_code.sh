@@ -1,39 +1,42 @@
 
-# Code for btrfs subvolume handling.
-# 130_include_mount_subvolumes_code.sh contains the function btrfs_subvolumes_setup for all btrfs subvolume handling.
 # Btrfs filesystems with subvolumes need a special handling.
-# All btrfs subvolume handling happens in the btrfs_subvolumes_setup function in 130_include_mount_subvolumes_code.sh
-# For a plain btrfs filesystem without subvolumes the btrfs_subvolumes_setup function does nothing.
+# This script layout/prepare/GNU/Linux/136_include_btrfs_subvolumes_SLES_code.sh
+# contains the function btrfs_subvolumes_setup_SLES for SLES 12 (and later) special btrfs subvolumes setup.
+# The script layout/prepare/GNU/Linux/135_include_btrfs_subvolumes_generic_code.sh
+# contains the function btrfs_subvolumes_setup_generic for generic btrfs subvolumes setup (e.g. for Ubuntu 18.04).
+# All btrfs subvolume handling for SLES 12 (and later) special btrfs subvolumes setup
+# happens in the btrfs_subvolumes_setup_SLES function in this script.
+# For a plain btrfs filesystem without subvolumes the btrfs_subvolumes_setup_SLES function does nothing.
 
-btrfs_subvolumes_setup() {
-    Log "Begin btrfs_subvolumes_setup( $@ )"
-    # Local variables are visible only in this btrfs_subvolumes_setup function and its children:
+btrfs_subvolumes_setup_SLES() {
+    Log "Begin btrfs_subvolumes_setup_SLES( $@ )"
+    # Local variables are visible only in this btrfs_subvolumes_setup_SLES function and its children:
     local dummy junk keyword info_message
     local device mountpoint mountopts target_system_mountpoint
     local subvolume_path subvolume_directory_path subvolume_mountpoint subvolume_mount_options
     local snapshot_subvolumes_devices_and_paths snapshot_subvolume_device_and_path snapshot_subvolume_device snapshot_subvolume_path
     local default_subvolume_path
     # Assign function arguments to meaningful variable names:
-    # This function is called in 130_include_mount_filesystem_code.sh as follows:
-    #   btrfs_subvolumes_setup $device $mountpoint $mountopts
-    # where $device is the device node where the filesystem was already created by 130_include_filesystem_code.sh
+    # This function is called in 133_include_mount_filesystem_code.sh as follows:
+    #   btrfs_subvolumes_setup_SLES $device $mountpoint $mountopts
+    # where $device is the device node where the filesystem was already created by 131_include_filesystem_code.sh
     # (usually a harddisk partition like e.g. /dev/sda1):
     device=$1
     mountpoint=$2
-    # mountopts are of the form "-o foo,bar,baz" (see 130_include_mount_filesystem_code.sh)
+    # mountopts are of the form "-o foo,bar,baz" (see 133_include_mount_filesystem_code.sh)
     # which means $3 is '-o' and 'foo,bar,baz' is $4:
     mountopts="$3 $4"
     # Empty device or mountpoint may indicate an error. In this case be verbose and inform the user:
     if test -z "$device" -o -z "$mountpoint" ; then
-        LogPrint "Empty device='$device' or mountpoint='$mountpoint' may indicate an error, skipping btrfs_subvolumes_setup( $@ )."
-        Log "Return 0 from btrfs_subvolumes_setup( $@ )"
+        LogPrintError "Empty device='$device' or mountpoint='$mountpoint' may indicate an error, skipping btrfs_subvolumes_setup_SLES( $@ )."
+        Log "Return 0 from btrfs_subvolumes_setup_SLES( $@ )"
         return 0
     fi
     ###########################################
     # SLES 12 SP1 (and later) special btrfs subvolumes setup detection:
     SLES12SP1_btrfs_detection_string="@/.snapshots/"
     if grep -q "^btrfsdefaultsubvol $device $mountpoint [0-9]* $SLES12SP1_btrfs_detection_string" "$LAYOUT_FILE" ; then
-        info_message="Doing SLES12-SP1 (and later) btrfs subvolumes setup because the default subvolume path contains '$SLES12SP1_btrfs_detection_string'"
+        info_message="SLES12-SP1 (and later) btrfs subvolumes setup needed for $device (default subvolume path contains '$SLES12SP1_btrfs_detection_string')"
         LogPrint $info_message
         echo "# $info_message" >> "$LAYOUT_CODE"
         # For SLES 12 SP1 a btrfsdefaultsubvol entry in disklayout.conf looks like
@@ -97,11 +100,11 @@ btrfs_subvolumes_setup() {
     while read dummy dummy dummy dummy subvolume_path junk ; do
         # Empty subvolume_path may indicate an error. In this case be verbose and inform the user:
         if test -z "$subvolume_path" ; then
-            LogPrint "btrfsnormalsubvol entry with empty subvolume_path for $device at $mountpoint may indicate an error, skipping subvolume setup for it."
+            LogPrintError "btrfsnormalsubvol entry with empty subvolume_path for $device at $mountpoint may indicate an error, skipping subvolume setup for it."
             continue
         fi
         # In case of SLES 12 SP1 (and later) special btrfs subvolumes setup skip setup of '@/.snapshots' normal btrfs subvolumes:
-        if test -n "$SLES12SP1_btrfs_subvolumes_setup" ; then
+        if test "$SLES12SP1_btrfs_subvolumes_setup" ; then
             # In case of SLES 12 SP1 (and later) special btrfs subvolumes setup
             # skip setup of the normal btrfs subvolume '@/.snapshots' because
             # that one will be created by "snapper/installation-helper --step 1"
@@ -143,7 +146,7 @@ btrfs_subvolumes_setup() {
         Log $info_message
         (
         echo "# $info_message"
-        if test -n "$subvolume_directory_path" ; then
+        if test "$subvolume_directory_path" ; then
             # Test in the recovery system if the directory path already exists to avoid that
             # useless 'mkdir -p' commands are run which look confusing in the "rear recover" log
             # regardless that 'mkdir -p' does nothing when its argument already exists:
@@ -173,7 +176,7 @@ btrfs_subvolumes_setup() {
     for dummy in "once" ; do
         # Empty subvolume_path may indicate an error. In this case be verbose and inform the user:
         if test -z "$subvolume_path" ; then
-            LogPrint "btrfsdefaultsubvol entry with empty subvolume_path for $device at $mountpoint may indicate an error, skipping default subvolume setup for it."
+            LogPrintError "btrfsdefaultsubvol entry with empty subvolume_path for $device at $mountpoint may indicate an error, skipping default subvolume setup for it."
             continue
         fi
         # When there is a non-empty subvolume_path, btrfs default subvolume setup is needed:
@@ -194,7 +197,7 @@ btrfs_subvolumes_setup() {
         # that different subvolume needs to be set to be the default subvolume:
         target_system_mountpoint=$TARGET_FS_ROOT$mountpoint
         Log "Setting $subvolume_path as btrfs default subvolume for $device at $mountpoint"
-        if test -n "$SLES12SP1_btrfs_subvolumes_setup" ; then
+        if test "$SLES12SP1_btrfs_subvolumes_setup" ; then
             (
             echo "# Begin btrfs default subvolume setup on $device at $mountpoint"
             echo "# Doing special SLES 12 SP1 btrfs default snapper snapshot subvolume setup"
@@ -215,7 +218,7 @@ btrfs_subvolumes_setup() {
             echo "if test -x $SLES12SP1_installation_helper_executable"
             echo "then LogPrint 'Running snapper/installation-helper'"
             echo "     $SLES12SP1_installation_helper_executable --step 1 --device $device --description 'first root filesystem'"
-            echo "else LogPrint '$SLES12SP1_installation_helper_executable not executable may indicate an error with btrfs default subvolume setup for $subvolume_path on $device'"
+            echo "else LogPrintError '$SLES12SP1_installation_helper_executable not executable may indicate an error with btrfs default subvolume setup for $subvolume_path on $device'"
             echo "fi"
             echo "mount -t btrfs -o subvolid=0 $mountopts $device $target_system_mountpoint"
             echo "# End step 1 of special SLES 12 SP1 btrfs default snapper snapshot subvolume setup"
@@ -253,7 +256,7 @@ btrfs_subvolumes_setup() {
         # E.g. missing subvolume mount options result that the subvolume path is read into subvolume_mount_options and subvolume_path becomes empty.
         # Therefore be verbose and inform the user:
         if test -z "$subvolume_mountpoint" -o -z "$subvolume_mount_options" -o -z "$subvolume_path" ; then
-            LogPrint "btrfsmountedsubvol entry for $device where subvolume_mountpoint='$subvolume_mountpoint' or subvolume_mount_options='$subvolume_mount_options' or subvolume_path='$subvolume_path' is empty may indicate an error, skipping mounting it."
+            LogPrintError "btrfsmountedsubvol entry for $device where subvolume_mountpoint='$subvolume_mountpoint' or subvolume_mount_options='$subvolume_mount_options' or subvolume_path='$subvolume_path' is empty may indicate an error, skipping mounting it."
             continue
         fi
         # When there are non-empty values, mounting normal subvolume is needed:
@@ -352,14 +355,14 @@ btrfs_subvolumes_setup() {
             echo "# Get the ID of the $subvolume_path subvolume because it must be mounted with subvolid=ID"
             echo "# (using subvol=NAME may not work as long as it is falsely mounted so that subvolume names may not match)"
             echo "subvolumeID=\$( btrfs subvolume list -a $target_system_mountpoint | sed -e 's/<FS_TREE>\///' | grep ' $subvolume_path\$' | tr -s '[:blank:]' ' ' | cut -d ' ' -f 2 )"
-            echo "if test -n \"\$subvolumeID\" ; then"
+            echo "if test \"\$subvolumeID\" ; then"
             echo "    # No remounting when subvolumeID is empty because then umount would work but mount would fail"
             echo "    # Remounting the $subvolume_path subvolume at $target_system_mountpoint"
             echo "    umount $target_system_mountpoint"
             echo "    mount -t btrfs -o $subvolume_mount_options -o subvolid=\$subvolumeID $device $target_system_mountpoint"
             echo "else"
             echo "    # Empty subvolumeID may indicate an error. Therefore be verbose and inform the user:"
-            echo "    LogPrint 'Empty subvolumeID for $subvolume_path on $device may indicate an error, skipping remounting it to $subvolume_mountpoint'"
+            echo "    LogPrintError 'Empty subvolumeID for $subvolume_path on $device may indicate an error, skipping remounting it to $subvolume_mountpoint'"
             echo "fi"
             echo "# End remounting btrfs subvolume $subvolume_path at $target_system_mountpoint"
             ) >> "$LAYOUT_CODE"
@@ -388,7 +391,7 @@ btrfs_subvolumes_setup() {
     done < <( grep "^btrfsmountedsubvol $device " "$LAYOUT_FILE" )
     ###########################################
     # Return successfully:
-    Log "End btrfs_subvolumes_setup( $@ )"
+    Log "End btrfs_subvolumes_setup_SLES( $@ )"
     true
 }
 
