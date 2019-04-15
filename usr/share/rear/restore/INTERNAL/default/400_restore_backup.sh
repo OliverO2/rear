@@ -61,7 +61,7 @@ $(printf '%s\n' "${repository_locations[@]}" | cat -n)
             UserOutput "Choice $choice_input is larger than the number of repository locations"
         fi
     else
-        UserOutput "Choice '$choice_input' is not a positive number"
+        [[ -n "$choice_input" ]] && UserOutput "Choice '$choice_input' is not a positive number"
     fi
 done
 
