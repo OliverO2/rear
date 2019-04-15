@@ -1,3 +1,89 @@
+rear (2.4.infix4) stable; urgency=medium
+
+  * Details:
+    - Add (commented-out) debug configuration variables (84367f63)
+    - Update configuration for new Btrfs subvolume setup (bae9c63c)
+    - btrfs subvolumes generic: fix 'subvolume set-default' for older versions
+      (b61c80fd)
+    - INTERNAL backup: avoid unnecessary message on empty repository choice
+      (07c7d58d)
+    - Better comments (b4a44b87)
+    - Added Debian buster examples how ESP is mounted to comments (cfa44a0b)
+    - Simplify awk constructs in 320_include_uefi_env.sh (issue #2095)
+      (11045023)
+    - Better comments (6cd5f649)
+    - For SLES11 mount TARGET_FS_ROOT/dev as tmpfs before copying recovery
+      system /dev contents to TARGET_FS_ROOT/dev (82d8d01b)
+    - Revive old 100_populate_dev.sh code for SLES11 (follow up of issue 2045)
+      (95e38225)
+    - Better comments and removed obsolete known_broken_symlink variable
+      (36dc1dfa)
+    - Do not copy symlink targets in proc sys dev run (issue#2111) (3d675542)
+    - update 640_verify_lvm_conf.sh with Johannes advises #2044 (8349f73b)
+    - Fixes for more than one disk (3586624f)
+    - adding 640_verify_lvm_conf.sh script (042822cb)
+    - Update 670_run_efibootmgr.sh (2ed93675)
+    - improve coding and readability (9137c3af)
+    - Fix disk device name in efibootmgr call for eMMC devices (e6eef1c9)
+    - Update ISSUE_TEMPLATE.md (4a127d8d)
+    - Update 630_verify_resolv_conf_file.sh (8c0c827f)
+    - quick hack to copy the real resolv.conf file on ubuntu18.x #2015 and #2018
+      (ccb6990a)
+    - Use simplest way to get current PID in bash 3 (related to issue 2089)
+      (44458969)
+    - Use [*] instead of [@] for array expansion inside a string (f99ee1f1)
+    - #1886 - LPAR/PPC64 bootlist is incorrectly set when having multiple 'prep'
+      partitions - Wrap bootlist into quotes (b1543503)
+    - - fixed bootlist (special thanks to pcahyna++) (cb2e2a51)
+    - Call mktemp with sufficent XXXXXXXXXX where needed otherwise use the
+      mktemp default (e366b1f1)
+    - Use mktemp to create the temporary file safely (0fc3d9fd)
+    - Use extended pattern matching to also support systems with more than 10
+      eMMC devices or more than 10 *boot* partitions on these devices (49775f3a)
+    - Determine the current PID for bash 3.x so that it works even from within a
+      nested subshell (992c64bb)
+    - Improve coding style: add double quotes to avoid possibly problematic
+      array expansion (ab9c602d)
+    - Add comments detailing issues with special partitions on eMMC devices
+      (6bf2d1b8)
+    - Ignore invalid partitions on eMMC devices of type *rpmb and *boot*
+      (bcdf6ba5)
+    - Do not terminate the current process that runs the Error function
+      (908446a7)
+    - Adjusted the two terminate_descendants_* functions and DoExitTasks to make
+      things work cleanly in case of Error from a deep nested subshell
+      (1c0bcc84)
+    - Better and fixed comments (0df5a3be)
+    - In Error function terminate descendants PIDs from childs to grandchilds to
+      hopefully fix issue 2089 (not yet fully tested) (d9a02ad1)
+    - In Error function exit our own subshell if we are in a subshell to
+      mitigate issue 2089 (not yet a final solution) (cfd44015)
+    - Error function must not immediately return to its caller so sleep one
+      second before return (03927eda)
+    - Fixed comments and messages about layout/prepare/GNU/Linux/13X_include_...
+      scripts that had been renamed via issue 2080. (57b1e230)
+    - Fixed automatic append devices to BTRFS_SUBVOLUME_SLES_SETUP when needed.
+      (f4a7d22f)
+    - Automatically append devices to the BTRFS_SUBVOLUME_SLES_SETUP array when
+      needed. (c0b0ddd5)
+    - Do not call btrfs_subvolumes_setup_generic with mountopts (not used by
+      callee). Better descriptive names of scripts and renumbered scripts (avoid
+      same numbers which looks sloppy). (cd2bd2e6)
+    - Adapted info_message about SLES12-SP1 (and later) btrfs subvolumes setup
+      needed (711c82e6)
+    - Using double quotes as in "${arr[@]}" to get all array elements
+      separatedly (4bd1d59b)
+    - Better ordering of the tests for BTRFS_SUBVOLUME_GENERIC_SETUP and
+      BTRFS_SUBVOLUME_SLES_SETUP for improved precedence handling (75837f73)
+    - Make both btrfs_subvolumes_setup implementations available (follow up of
+      issue_2079) (66777170)
+    - Get last field of 'ethtool -P' instead of 3rd (same but more robust)
+      (6f078ab3)
+    - network: Record permanent mac address when device is enslaved in a Team,
+      or else /etc/mac-addresses will record broken information (206fe703)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 15 Apr 2019 23:23:58 +0200
+
 rear (2.4.infix3) stable; urgency=medium
 
   * Details:
