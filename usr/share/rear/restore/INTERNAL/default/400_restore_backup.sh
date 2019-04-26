@@ -79,6 +79,14 @@ case "$repository_location" in
         read -r -a repository_location_components <<< "$repository_location"
         device="${repository_location_components[1]}"
 
+        if [[ -z "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY" ]]; then
+            INTERNAL_BACKUP_REPOSITORY_DIRECTORY="$(LC_ALL=C.UTF-8 infix-backup --quiet configuration values --no_paths repository:directory)"
+            if [[ -z "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY" ]]; then
+                echo "Could not determine backup repository directory from backup configuration." >&2
+                exit 1
+            fi
+        fi
+
         repository_directory="$disk_mount_directory/$(basename "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY")"
         repository_options=("--repository_directory" "$repository_directory")
 
