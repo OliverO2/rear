@@ -1,3 +1,13 @@
+rear (2.4.infix6) stable; urgency=medium
+
+  * Details:
+    - Adapt to fix for rear/rear/issues/2127 (md5sum) (702525f3)
+    - Revert "Fix 'Failed to apply layout mappings' complaining about unmapped
+      disks" (cff1fcea)
+    - Update 995_md5sums_rootfs.sh (f3157906)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 29 Apr 2019 17:54:27 +0200
+
 rear (2.4.infix5) stable; urgency=medium
 
   * Details:
