@@ -1,3 +1,22 @@
+rear (2.4.infix5) stable; urgency=medium
+
+  * Details:
+    - Fix #2120: avoid unwanted "Welcome to" messages in log file (1f744a86)
+    - Fix exclusion of of TCG Opal 2 self-encrypting disks (fbfb9d67)
+    - Fix 'Failed to apply layout mappings' complaining about unmapped disks
+      (b3f1e029)
+    - site.conf: Adapt to Ubuntu 18.04 and infix-system changes (2362ce76)
+    - Boot robustness: move 'infix-backup' call from 'site.conf' to restore
+      (67ab4699)
+    - change variable name from UDEV_RULE_FILES to UDEV_NET_MAC_RULE_FILES #2074
+      (b71785ec)
+    - replace RULE_FILES with a global UDEV_RULE_FILES #2074 (2262cfd4)
+    - Update default.conf (f86895b1)
+    - Update default.conf (2377d694)
+    - Address issue https://github.com/rear/rear/issues/2105 (9d77b783)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Sat, 27 Apr 2019 18:29:16 +0200
+
 rear (2.4.infix4) stable; urgency=medium
 
   * Details:
