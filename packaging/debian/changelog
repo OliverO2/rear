@@ -1,3 +1,12 @@
+rear (2.4.infix7) stable; urgency=medium
+
+  * Details:
+    - Adapt to 'USE_SERIAL_CONSOLE' tests and fix for rear/rear/issues/2129
+      (e9640ab4)
+    - Improve handling of broken symlinks (fix #2129, fix #2130) (2395f4ff)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Tue, 30 Apr 2019 17:15:51 +0200
+
 rear (2.4.infix6) stable; urgency=medium
 
   * Details:
