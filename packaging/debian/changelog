@@ -1,3 +1,10 @@
+rear (2.5-1.infix1) stable; urgency=medium
+
+  * RAWDISK and TCG Opal 2 Self-Encrypting Disks: add Secure Boot support
+  * Bug fixes
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Thu, 27 Jun 2019 23:36:24 +0200
+
 rear (2.5-1) stable; urgency=low
 
   * Mainly bug fixes
