@@ -12,7 +12,7 @@ if [[ ! -z "$PXE_TFTP_URL" ]] ; then
     mkdir -p $v "$BUILD_DIR/tftpbootfs" >&2
     StopIfError "Could not mkdir '$BUILD_DIR/tftpbootfs'"
     AddExitTask "rm -Rf $v $BUILD_DIR/tftpbootfs >&2"
-    mount_url $PXE_TFTP_URL $BUILD_DIR/tftpbootfs
+    mount_url $PXE_TFTP_URL $BUILD_DIR/tftpbootfs $BACKUP_OPTIONS
     # However, we copy under $OUTPUT_PREFIX_PXE directory (usually HOSTNAME) to have different clients on one pxe server
     PXE_TFTP_LOCAL_PATH=$BUILD_DIR/tftpbootfs
     # mode must readable for others for pxe and we copy under the client HOSTNAME (=OUTPUT_PREFIX_PXE)
@@ -61,7 +61,11 @@ if [[ ! -z "$PXE_TFTP_URL" ]] && [[ "$PXE_RECOVER_MODE" = "unattended" ]] ; then
     cp $v $syslinux_modules_dir/chain.c32 $BUILD_DIR/tftpbootfs >&2
     cp $v $syslinux_modules_dir/hdt.c32 $BUILD_DIR/tftpbootfs >&2
     cp $v $syslinux_modules_dir/reboot.c32 $BUILD_DIR/tftpbootfs >&2
-    cp $v $syslinux_modules_dir/poweroff.com $BUILD_DIR/tftpbootfs >&2
+    if [[ -r "$syslinux_modules_dir/poweroff.com" ]] ; then
+        cp $v $syslinux_modules_dir/poweroff.com $BUILD_DIR/tftpbootfs >&2
+    elif [[ -r "$syslinux_modules_dir/poweroff.c32" ]] ; then
+        cp $v $syslinux_modules_dir/poweroff.c32 $BUILD_DIR/tftpbootfs >&2
+    fi
     chmod 644 $BUILD_DIR/tftpbootfs/*.c32
     chmod 644 $BUILD_DIR/tftpbootfs/*.0
 fi
@@ -81,3 +85,4 @@ else
     RESULT_FILES=( "${RESULT_FILES[@]}" "$PXE_TFTP_LOCAL_PATH/$PXE_KERNEL" "$PXE_TFTP_LOCAL_PATH/$PXE_INITRD" "$PXE_TFTP_LOCAL_PATH/$PXE_MESSAGE" )
 fi
 
+# vim: set et ts=4 sw=4

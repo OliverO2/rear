@@ -5,6 +5,33 @@
 
 LogPrint "Testing that the recovery system in $ROOTFS_DIR contains a usable system"
 
+if test "$KEEP_BUILD_DIR" = "errors"; then
+    local keep_build_dir_on_errors=1
+else
+    # KEEP_BUILD_DIR does not say to keep it on errors
+    # - effective value depends on whether we are running interactively
+    if tty -s ; then
+        local keep_build_dir_on_errors=1
+    else
+        local keep_build_dir_on_errors=0
+    fi
+fi
+
+function keep_build_dir() {
+    if ! is_true "$KEEP_BUILD_DIR" && ! is_false "$KEEP_BUILD_DIR"; then
+        # is either empty or equal to "errors" ... or some garbage value
+        local orig_keep_build_dir="$KEEP_BUILD_DIR"
+        KEEP_BUILD_DIR="${keep_build_dir_on_errors}"
+    fi
+    if is_true "$KEEP_BUILD_DIR" ; then
+        LogPrintError "Build area kept for investigation in $BUILD_DIR, remove it when not needed"
+    elif ! is_false "$orig_keep_build_dir" ; then
+        # if users disabled preserving the build dir explicitly, let's not bother them with messages
+        LogPrintError "Build area $BUILD_DIR will be removed"
+        LogPrintError "To preserve it for investigation set KEEP_BUILD_DIR=errors or run ReaR with -d"
+    fi
+}
+
 # In case the filesystem that contains the ROOTFS_DIR is mounted 'noexec' we cannot do the 'chroot' tests.
 # The filesystem_name function in linux-functions.sh returns the mountpoint (not a filesystem name like 'ext4'):
 local rootfs_dir_fs_mountpoint=$( filesystem_name $ROOTFS_DIR )
@@ -17,7 +44,7 @@ fi
 
 # The bash test ensures that we have a working bash in the ReaR recovery system:
 if ! chroot $ROOTFS_DIR /bin/bash -c true ; then
-    KEEP_BUILD_DIR=1
+    keep_build_dir
     BugError "ReaR recovery system in '$ROOTFS_DIR' is broken: 'bash -c true' failed"
 fi
 
@@ -26,7 +53,7 @@ fi
 # First test is 'ldd /bin/bash' to ensure 'ldd' works:
 Log "Testing 'ldd /bin/bash' to ensure 'ldd' works for the subsequent 'ldd' tests within the recovery system"
 if ! chroot $ROOTFS_DIR /bin/ldd /bin/bash 1>&2 ; then
-    KEEP_BUILD_DIR=1
+    keep_build_dir
     BugError "ReaR recovery system in '$ROOTFS_DIR' is broken: 'ldd /bin/bash' failed"
 fi
 
@@ -43,6 +70,7 @@ local broken_binaries=""
 # so that for testing such third-party backup tools we must also use
 # their special LD_LIBRARY_PATH here:
 local old_LD_LIBRARY_PATH
+# Save LD_LIBRARY_PATH only if one is already set:
 test $LD_LIBRARY_PATH && old_LD_LIBRARY_PATH=$LD_LIBRARY_PATH
 if test "$BACKUP" = "TSM" ; then
     # Use a TSM-specific LD_LIBRARY_PATH to find TSM libraries
@@ -61,7 +89,14 @@ if test "$BACKUP" = "NBU" ; then
 fi
 # Actually test all binaries for 'not found' libraries.
 # Find all binaries and libraries also e.g. those that are copied via COPY_AS_IS into other paths:
-for binary in $( find $ROOTFS_DIR -type f -executable -printf '/%P\n' ); do
+for binary in $( find $ROOTFS_DIR -type f -executable -printf '/%P\n' ) ; do
+    # Skip the ldd test for kernel modules because in general running ldd on kernel modules does not make sense
+    # and sometimes running ldd on kernel modules causes needless errors because sometimes that segfaults
+    # which results false alarm "ldd: exited with unknown exit code (139)" messages ( 139 - 128 = 11 = SIGSEGV )
+    # cf. https://github.com/rear/rear/issues/2177 which also shows that sometimes kernel modules could be
+    # not only in the usual directory /lib/modules/ but also e.g. in /usr/lib/modules/
+    # so we 'grep' for '/lib/modules/' anywhere in the full path of the binary:
+    grep -q "/lib/modules/" <<<"$binary" && continue
     # In order to handle relative paths, we 'cd' to the directory containing $binary before running ldd.
     # In particular third-party backup tools may have shared object dependencies with relative paths.
     # For an example see https://github.com/rear/rear/pull/1560#issuecomment-343504359 that reads (excerpt):
@@ -79,18 +114,18 @@ for binary in $( find $ROOTFS_DIR -type f -executable -printf '/%P\n' ); do
     #       libc.so.6 => /lib64/libc.so.6 (0x00007f6656560000)
     #       ...
     # The login shell is there so that we can call commands as in a normal working shell,
-
     # cf. https://github.com/rear/rear/issues/862#issuecomment-274068914
     # Redirected stdin for login shell avoids motd welcome message, cf. https://github.com/rear/rear/issues/2120.
     chroot $ROOTFS_DIR /bin/bash --login -c "cd $( dirname $binary ) && ldd $binary" < /dev/null | grep -q 'not found' && broken_binaries="$broken_binaries $binary"
 done
+# Restore the LD_LIBRARY_PATH if it was saved above (i.e. when LD_LIBRARY_PATH had been set before)
+# otherwise unset a possibly set LD_LIBRARY_PATH (i.e. when LD_LIBRARY_PATH had not been set before):
 test $old_LD_LIBRARY_PATH && export LD_LIBRARY_PATH=$old_LD_LIBRARY_PATH || unset LD_LIBRARY_PATH
 
 # Report binaries with 'not found' shared object dependencies:
 local fatal_missing_library=""
 if contains_visible_char "$broken_binaries" ; then
     LogPrintError "There are binaries or libraries in the ReaR recovery system that need additional libraries"
-    KEEP_BUILD_DIR=1
     local ldd_output=""
     for binary in $broken_binaries ; do
         # Only for programs (i.e. files in a .../bin/... or .../sbin/... directory) treat a missing library as fatal
@@ -120,6 +155,7 @@ if contains_visible_char "$broken_binaries" ; then
         PrintError "$( grep 'not found' <<<"$ldd_output" )"
     done
     LogPrintError "ReaR recovery system in '$ROOTFS_DIR' needs additional libraries, check $RUNTIME_LOGFILE for details"
+    is_true "$fatal_missing_library" && keep_build_dir
 fi
 
 # Testing that each program in the PROGS array can be found as executable command within the recovery system
@@ -157,11 +193,11 @@ for required_program in "${REQUIRED_PROGS[@]}" ; do
 done
 # Report programs in the REQUIRED_PROGS array that cannot be found as executable command within the recovery system:
 if contains_visible_char "$missing_required_programs" ; then
-    KEEP_BUILD_DIR=1
     fatal_missing_program="yes"
     LogPrintError "Required programs cannot be found as executable command in the ReaR recovery system (bug error)"
     LogPrintError "$missing_required_programs"
     LogPrintError "ReaR recovery system in '$ROOTFS_DIR' lacks required programs, check $RUNTIME_LOGFILE for details"
+    keep_build_dir
 fi
 
 # Finally after all tests had been done (so that the user gets all result messages) error out if needed:

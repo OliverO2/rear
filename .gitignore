@@ -4,3 +4,5 @@
 build-stamp
 /var
 .DS_Store
+.vscode
+servers
