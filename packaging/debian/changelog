@@ -1,3 +1,11 @@
+rear (2.5-1.infix2) stable; urgency=medium
+
+  * OPALPBA: complete Plymouth boot animation integration on Ubuntu
+  * Integrate upstream/master up to 2019-11-14 13:47
+  * Bug fixes
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 18 Nov 2019 01:04:54 +0100
+
 rear (2.5-1.infix1) stable; urgency=medium
 
   * RAWDISK and TCG Opal 2 Self-Encrypting Disks: add Secure Boot support
