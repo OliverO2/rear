@@ -1,3 +1,9 @@
+rear (2.5-1.infix3) stable; urgency=medium
+
+  * OPALPBA: fix Plymouth boot animation integration on Ubuntu Server
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 18 Nov 2019 14:29:57 +0100
+
 rear (2.5-1.infix2) stable; urgency=medium
 
   * OPALPBA: complete Plymouth boot animation integration on Ubuntu
