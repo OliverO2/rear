@@ -1,3 +1,11 @@
+rear (2.5-1.infix4) stable; urgency=medium
+
+  * OPALPBA: Fix changing password on multiple SEDs at once
+  * Integrate upstream/master up to 2020-03-25 14:17 (bdff9e06)
+  * Bug fixes
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 30 Mar 2020 18:38:05 +0200
+
 rear (2.5-1.infix3) stable; urgency=medium
 
   * OPALPBA: fix Plymouth boot animation integration on Ubuntu Server
