@@ -147,34 +147,33 @@ if is_true $USING_UEFI_BOOTLOADER ; then
     # probably a bug, as I was able to boot with value set to root=anything
     root_uuid=$(get_root_disk_UUID)
 
-    # Grub2 modules that will be used for booting "Relax-and-Recover"
-    # It might be useful to make this variable global in the future
-    grub2_modules="linux echo all_video part_gpt ext2 btrfs search configfile"
-
     # Create configuration file for "Relax-and-Recover" UEFI boot entry.
     # This file will not interact with existing Grub2 configuration in any way.
-    (   echo "menuentry '$grub_rear_menu_entry_name' --class os {"
+    (   echo "set btrfs_relative_path=y"
+        echo "insmod efi_gop"
+        echo "insmod efi_uga"
+        echo "insmod video_bochs"
+        echo "insmod video_cirrus"
+        echo "insmod all_video"
+        echo ""
+        echo "set gfxpayload=keep"
+        echo ""
+        echo "menuentry '$grub_rear_menu_entry_name' --class os {"
         echo "          search --no-floppy --fs-uuid --set=root $grub_boot_uuid"
         echo "          echo 'Loading kernel $boot_kernel_file ...'"
         echo "          linux $grub_boot_dir/$boot_kernel_name root=UUID=$root_uuid $KERNEL_CMDLINE"
         echo "          echo 'Loading initrd $boot_initrd_file (may take a while) ...'"
         echo "          initrd $grub_boot_dir/$boot_initrd_name"
         echo "}"
+        echo ""
+        echo "menuentry 'Boot original system' {"
+        echo "          search --fs-uuid --no-floppy --set=esp $esp_disk_uuid"
+        echo "          chainloader (\$esp)$esp_relative_bootloader"
+        echo "}"
     ) > $grub_config_dir/rear.cfg
 
-    # Tell rear.efi which configuration file to load
-    (   echo "search --no-floppy --fs-uuid --set=root $grub_boot_uuid"
-        echo ""
-        echo "set btrfs_relative_path=y"
-        echo "set prefix=(\$root)${grub_boot_dir}/grub${grub_num}"
-        echo ""
-        echo "configfile (\$root)${grub_boot_dir}/grub${grub_num}/rear.cfg"
-    ) > $grub_config_dir/rear_embed.cfg
-
     # Create rear.efi at UEFI default boot directory location.
-    if ! grub${grub_num}-mkimage -o $boot_dir/efi/EFI/BOOT/rear.efi -O x86_64-efi -c $grub_config_dir/rear_embed.cfg -p /EFI/BOOT $grub2_modules ; then
-        Error "Could not create UEFI boot image"
-    fi
+    build_bootx86_efi $boot_dir/efi/EFI/BOOT/rear.efi $grub_config_dir/rear.cfg "$boot_dir" "$UEFI_BOOTLOADER"
 
     # If UEFI boot entry for "Relax-and-Recover" does not exist, create it.
     # This will also add "Relax-and-Recover" to boot order because if UEFI entry is not listed in BootOrder,

@@ -17,6 +17,8 @@ Fill in the following items before submitting a new issue
 
 * Storage (local disk or SSD) and/or SAN (FC or iSCSI or FCoE) and/or multipath (DM or NVMe):
 
+* Storage layout ("lsblk -ipo NAME,KNAME,PKNAME,TRAN,TYPE,FSTYPE,SIZE,MOUNTPOINT" or "lsblk" as makeshift):
+
 * Description of the issue (ideally so that others can reproduce it):
 
 * Workaround, if any:
