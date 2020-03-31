@@ -1,5 +1,5 @@
 
-# For "rear mkbackup" and also for "rear mkrescue"
+# For "rear mkbackup" and also in particular for "rear mkrescue"
 # ( also the latter because for most external backup methods only "rear mkrescue"
 #   is used because most external backup methods do not implement making a backup
 #   but only implement to restore a backup see 'BACKUP SOFTWARE INTEGRATION' in "man rear" )
@@ -10,8 +10,8 @@
 # see https://github.com/rear/rear/issues/914
 # and https://github.com/rear/rear/issues/159
 # and https://github.com/rear/rear/issues/2337#issuecomment-596471615
+# and https://github.com/rear/rear/issues/2351
 
 if ! test -d "$SHARE_DIR/restore/$BACKUP" ; then
     Error "The BACKUP method '$BACKUP' is not supported (no $SHARE_DIR/restore/$BACKUP directory)"
 fi
-
