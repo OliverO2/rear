@@ -80,7 +80,7 @@ case "$repository_location" in
         device="${repository_location_components[1]}"
 
         if [[ -z "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY" ]]; then
-            INTERNAL_BACKUP_REPOSITORY_DIRECTORY="$(LC_ALL=C.UTF-8 infix-backup --quiet configuration values --no_paths repository:directory)"
+            INTERNAL_BACKUP_REPOSITORY_DIRECTORY="$(LC_ALL=C.UTF-8 infix-backup --quiet configuration values --no-paths repository:directory)"
             if [[ -z "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY" ]]; then
                 echo "Could not determine backup repository directory from backup configuration." >&2
                 exit 1
@@ -88,7 +88,7 @@ case "$repository_location" in
         fi
 
         repository_directory="$disk_mount_directory/$(basename "$INTERNAL_BACKUP_REPOSITORY_DIRECTORY")"
-        repository_options=("--repository_directory" "$repository_directory")
+        repository_options=("--repository-directory" "$repository_directory")
 
         while ! cryptsetup --readonly open --type luks "$device" backup; do
             LogUserOutput "Could not decrypt disk partition $device"
@@ -121,7 +121,7 @@ unset IFS GLOBIGNORE
 #
 while true; do
     LogUserOutput "
-Please choose the backup set to restore from. These are the recent
+Please choose the backup set to restore from. These are the most recent
 $available_backup_set_limit backup sets available in the repository:
 
 $(printf '%s\n' "${available_backup_sets[@]}" | cat -n)
@@ -146,7 +146,7 @@ done
 # Discover available sources
 #
 
-IFS=$'\n' GLOBIGNORE='*' available_sources=($(LC_ALL=C.UTF-8 infix-backup --source_root "$TARGET_FS_ROOT" --quiet list-sources --filter backup))
+IFS=$'\n' GLOBIGNORE='*' available_sources=($(LC_ALL=C.UTF-8 infix-backup --source-root "$TARGET_FS_ROOT" --quiet list-sources --filter backup))
 StopIfError "Could not discover configured backup sources"
 unset IFS GLOBIGNORE
 
@@ -195,17 +195,17 @@ if [[ ${#selected_sources[@]} -eq 0 ]]; then
     source_options=()
 else
     LogUserOutput "Restoring sources ${selected_sources[*]}"
-    source_options=("--sources" "${selected_sources[@]}" "--end_of_list")
+    source_options=("--sources" "${selected_sources[@]}" "--end-of-list")
 fi
 LC_ALL=C.UTF-8 infix-backup "${repository_options[@]}" \
-    restore-recent --complete_existing_directories "${source_options[@]}" -d "$selected_backup_set" "$TARGET_FS_ROOT"
+    restore-recent --complete-existing-directories "${source_options[@]}" -d "$selected_backup_set" "$TARGET_FS_ROOT"
 StopIfError "Could not successfully finish infix-backup restore"
 
 
 #
 # Make snapshots for just-restored sources where possible
 #
-LC_ALL=C.UTF-8 infix-backup --source_root "$TARGET_FS_ROOT" snapshot create
+LC_ALL=C.UTF-8 infix-backup --source-root "$TARGET_FS_ROOT" snapshot create
 
 
 #
