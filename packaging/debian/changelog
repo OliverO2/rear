@@ -1,3 +1,18 @@
+rear (2.5-1.infix5) stable; urgency=medium
+
+  * Integrate upstream/master up to 2020-04-14 14:42 (15b1227e)
+  * Bug fixes
+  * Additional fixes:
+    - Fix #2362: Patch sshd_config in a safe way (ae3bf4be)
+    - Remove patching sshd_config at rescue system startup by run-sshd
+      (14672cbd)
+    - Fix 2360 (2): Apply xxx_fix_broken_links.sh before files get patched
+      (b1d870de)
+    - Fix 2360: Apply xxx_fix_broken_links.sh before files get patched
+      (5071f3b8)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Tue, 14 Apr 2020 15:54:40 +0200
+
 rear (2.5-1.infix4) stable; urgency=medium
 
   * OPALPBA: Fix changing password on multiple SEDs at once
