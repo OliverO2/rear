@@ -13,12 +13,12 @@ define_dhclients_variable()
         dhcp6c dhclient6 ;
     do
         [ "x$x" == x ] && continue
-        for d in ${dhclients[@]} ; do
+        for d in "${dhclients[@]}" ; do
             [ "x$d" = "x$x" ] && continue 2
         done
-        dhclients=(${dhclients[@]} "$x")
+        dhclients+=("$x")
     done
-    dhclients=${dhclients[@]}
+    dhclients="${dhclients[*]}"
 }
 
 dhcp_interfaces_active() {
@@ -47,15 +47,29 @@ dhcp_interfaces_active() {
         local config_base config_file
 
         # Read relative config file paths into the 'config_files' array variable (safe in case of blanks).
-        while IFS='' read -r config_file; do config_files+=("$config_file"); done < <(for config_base in "${config_bases[@]}"; do (cd "$config_base" && find systemd/network -name '*.network' -print) done | sort -u)
+        while IFS='' read -r config_file; do
+            config_files+=("$config_file")
+        done < <(
+            for config_base in "${config_bases[@]}"; do
+                (cd "$config_base" && find systemd/network -name '*.network' -print)
+            done | sort -u
+        )
+
+        # Determine the list of active network interface devic names.
+        local ip_device_regexp="$(ip link show | awk -F '[: ]+' '/state UP/ { printf("%s%s", sep, $2); sep="|"; }')"
 
         for config_file in "${config_files[@]}"; do
             for config_base in "${config_bases[@]}"; do
-                if [[ -f "$config_base/$config_file" ]]; then
-                    if grep -Eq '^[[:space:]]*DHCP[[:space:]]*=[[:space:]]*(yes|ip)' "$config_base/$config_file"; then
-                        Log "Detected an active systemd-networkd configured to use its built-in DHCP client, enabling USE_DHCLIENT"
-                        USE_DHCLIENT=y
-                        return  # no additional checks needed
+                if [[ -r "$config_base/$config_file" ]]; then
+                    # Check only configuration files matching an active network interface devic name. (Note:
+                    # configuration files allow other types of matching, which is ignored here for simplicity.)
+                    if grep -Eq "^[[:space:]]*Name[[:space:]]*=[[:space:]]*($ip_device_regexp)[[:space:]]*$" "$config_base/$config_file"; then
+                        # Check if DHCP is enabled for an interface.
+                        if grep -Eq '^[[:space:]]*DHCP[[:space:]]*=[[:space:]]*(yes|ip)' "$config_base/$config_file"; then
+                            Log "Detected an active systemd-networkd configured to use its built-in DHCP client, enabling USE_DHCLIENT"
+                            USE_DHCLIENT=y
+                            return  # no additional checks needed
+                        fi
                     fi
                     break  # do not consider lower-priority config files
                 fi
@@ -113,8 +127,8 @@ fi
 
 # we made our own /etc/dhclient.conf and /bin/dhclient-script files (no need to copy these
 # from the local Linux system for dhclient). For dhcpcd we have /bin/dhcpcd.sh foreseen.
-COPY_AS_IS=( "${COPY_AS_IS[@]}" "/etc/localtime" "/usr/lib/dhcpcd/*" )
-PROGS=( "${PROGS[@]}" arping ipcalc usleep "${dhclients[@]}" )
+COPY_AS_IS+=( "/etc/localtime" "/usr/lib/dhcpcd/*" )
+PROGS+=( arping ipcalc usleep "${dhclients[@]}" )
 
 # At this point we want DHCP client support:
 if test "$USE_DHCLIENT" ; then
