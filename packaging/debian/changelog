@@ -1,3 +1,9 @@
+rear (2.5-1.infix7) stable; urgency=medium
+
+  * Integrate upstream/master up to 2020-04-20 15:47 (a575f8a2)
+
+ -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Wed, 22 Apr 2020 15:31:55 +0200
+
 rear (2.5-1.infix6) stable; urgency=medium
 
   * Integrate upstream/master up to 2020-04-15 16:36 (22c9caee)
