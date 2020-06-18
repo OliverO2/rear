@@ -1,59 +1,9 @@
-rear (2.5-1.infix7) stable; urgency=medium
+rear (2.6-1) stable; urgency=low
 
-  * Integrate upstream/master up to 2020-04-20 15:47 (a575f8a2)
+  * Mainly bug fixes
+  * IBM Z s390x type of processors support has been added
 
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Wed, 22 Apr 2020 15:31:55 +0200
-
-rear (2.5-1.infix6) stable; urgency=medium
-
-  * Integrate upstream/master up to 2020-04-15 16:36 (22c9caee)
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Wed, 15 Apr 2020 16:05:07 +0200
-
-rear (2.5-1.infix5) stable; urgency=medium
-
-  * Integrate upstream/master up to 2020-04-14 14:42 (15b1227e)
-  * Bug fixes
-  * Additional fixes:
-    - Fix #2362: Patch sshd_config in a safe way (ae3bf4be)
-    - Remove patching sshd_config at rescue system startup by run-sshd
-      (14672cbd)
-    - Fix 2360 (2): Apply xxx_fix_broken_links.sh before files get patched
-      (b1d870de)
-    - Fix 2360: Apply xxx_fix_broken_links.sh before files get patched
-      (5071f3b8)
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Tue, 14 Apr 2020 15:54:40 +0200
-
-rear (2.5-1.infix4) stable; urgency=medium
-
-  * OPALPBA: Fix changing password on multiple SEDs at once
-  * Integrate upstream/master up to 2020-03-25 14:17 (bdff9e06)
-  * Bug fixes
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 30 Mar 2020 18:38:05 +0200
-
-rear (2.5-1.infix3) stable; urgency=medium
-
-  * OPALPBA: fix Plymouth boot animation integration on Ubuntu Server
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 18 Nov 2019 14:29:57 +0100
-
-rear (2.5-1.infix2) stable; urgency=medium
-
-  * OPALPBA: complete Plymouth boot animation integration on Ubuntu
-  * Integrate upstream/master up to 2019-11-14 13:47
-  * Bug fixes
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Mon, 18 Nov 2019 01:04:54 +0100
-
-rear (2.5-1.infix1) stable; urgency=medium
-
-  * RAWDISK and TCG Opal 2 Self-Encrypting Disks: add Secure Boot support
-  * Bug fixes
-
- -- Oliver Okrongli <oliver@foxtrot.internal.infix.de>  Thu, 27 Jun 2019 23:36:24 +0200
-
+ -- Gratien Dhaese <gratien.dhaese@gmail.com>  Wed, 17 Jun 2020 17:16:25 +0100
 rear (2.5-1) stable; urgency=low
 
   * Mainly bug fixes
