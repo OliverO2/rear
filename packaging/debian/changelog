@@ -1,3 +1,9 @@
+rear (2.6.infix1) stable; urgency=medium
+
+  * Migrate to upstream release 2.6
+
+ -- Oliver Okrongli <oliver@juliet.internal.infix.de>  Thu, 18 Jun 2020 21:59:35 +0200
+
 rear (2.6-1) stable; urgency=low
 
   * Mainly bug fixes
