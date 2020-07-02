@@ -1,3 +1,22 @@
+rear (2.6.infix2) stable; urgency=medium
+
+  * Migrate to upstream 055e3a10
+    Johannes Meixner <jsmeix@suse.com> on 02.07.20 at 15:02
+  * Details:
+    - opaladmin reactivate: Add safeguard against disk access errors (c58dfb9f)
+    - TCG Opal-2: replace 'StopIfError' use, simplify quoting in messages
+      (fe0be18f)
+    - opaladmin: Add sub-commands 'deactivate', 'reactivate' (0db3a331)
+    - OPALPBA: Improve boot splash on Ubuntu 20.04 (219809fd)
+    - OPALPBA, Ubuntu: Fix incomplete file exclusions (e9f61ccc)
+    - Make replacement of source disk in XFS config files less error prone.
+      (9c236737)
+    - Migrate XFS configuration files. When in MIGRATION_MODE, migrate/rename
+      XFS configuration files so they follow disk mapping set by user.
+      (a8fd431f)
+
+ -- Oliver Okrongli <oliver@juliet.internal.infix.de>  Wed, 01 Jul 2020 16:10:31 +0200
+
 rear (2.6.infix1) stable; urgency=medium
 
   * Migrate to upstream release 2.6
